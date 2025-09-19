@@ -13,12 +13,12 @@ from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-st.set_page_config(layout="wide", page_title="Dashboard CEO - Análisis de Pedidos", page_icon="📊")
-
 # Logo en la esquina superior
-top_col1, top_col2 = st.columns([0.9,0.1])
+top_col1, top_col2 = st.columns([0.7,0.3])
 with top_col2:
     st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
+
+st.set_page_config(layout="wide", page_title="Dashboard CEO - Análisis de Pedidos", page_icon="📊")
 
 # ----------------------- Custom CSS for CEO styling -----------------------
 st.markdown("""

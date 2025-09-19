@@ -21,7 +21,7 @@ st.title("📦 Dashboard Avanzado de Despachos Diarios")
 st.markdown("---")
 
 # Logo en la esquina superior
-top_col1, top_col2 = st.columns([0.9,0.1])
+top_col1, top_col2 = st.columns([0.7,0.3])
 with top_col2:
     st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
 
@@ -32,16 +32,12 @@ with top_col2:
 def load_and_process_data(uploaded_file):
     """Carga y procesa el archivo Excel"""
     try:
-        df = pd.read_excel(uploaded_file, sheet_name="Datad")
-        st.write(f"**Registros iniciales cargados:** {len(df)}")
-        
+        df = pd.read_excel(uploaded_file)
+       
         # Limpiar y normalizar columnas (eliminar espacios excesivos)
         df.columns = df.columns.astype(str).str.strip().str.upper()
         # Reemplazar múltiples espacios por uno solo
         df.columns = [' '.join(col.split()) for col in df.columns]
-        
-        st.write("**Columnas encontradas:**")
-        st.write(list(df.columns))
         
         # Mapeo de nombres de columnas comunes
         column_mapping = {
@@ -58,11 +54,36 @@ def load_and_process_data(uploaded_file):
                 df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
                 if df[col].isna().all():
                     st.warning(f"No se pudieron procesar las fechas en la columna {col}")
+
+        # Limpiar espacios en ALISTAMIENTO
+        if "ALISTAMIENTO" in df.columns:
+            df["ALISTAMIENTO"] = df["ALISTAMIENTO"].astype(str).str.strip()
+
+        # Mapear códigos de ciudad
+        if "COS" in df.columns:
+            def mapear_ciudad(cos):
+                cos = pd.to_numeric(cos, errors='coerce')
+                if pd.isna(cos):
+                    return "Sin ciudad"
+                elif cos == 1:
+                    return "Bogotá"
+                elif cos == 2:
+                    return "Medellín"
+                elif cos == 999:
+                    return "RTA"
+                else:
+                    return f"Ciudad {int(cos)}"
+            
+            df["CIUDAD"] = df["COS"].apply(mapear_ciudad)
         
         # Calcular tiempo de despacho
         if "FECHA_FACTURA" in df.columns and "FECHA DESPACHO" in df.columns:
             df["TIEMPO_DESPACHO_DIAS"] = (df["FECHA DESPACHO"] - df["FECHA_FACTURA"]).dt.days
             df["TIEMPO_DESPACHO_HORAS"] = (df["FECHA DESPACHO"] - df["FECHA_FACTURA"]).dt.total_seconds() / 3600
+
+        # Limpiar espacios en ALISTAMIENTO
+        if "ALISTAMIENTO" in df.columns:
+            df["ALISTAMIENTO"] = df["ALISTAMIENTO"].astype(str).str.strip()
         
         # Limpiar costos - ser más agresivo con la limpieza
         if "COSTO FLETE" in df.columns:
@@ -111,16 +132,28 @@ def load_and_process_data(uploaded_file):
         # Categorizar estatus - ser más flexible
         if "ESTATUS" in df.columns:
             df["ESTATUS_CLEAN"] = df["ESTATUS"].fillna("SIN ESTATUS").astype(str).str.upper().str.strip()
-            df["IS_ENTREGADO"] = df["ESTATUS_CLEAN"].isin(["ENTREGADO", "ENTREGADA", "DELIVERED", "COMPLETADO"])
+            df["IS_ENTREGADO"] = df["ESTATUS_CLEAN"].isin(["ENTREGADO", "ENTREGADA", "DELIVERED", "COMPLETADO", "DESPACHADO", "DEPACHADO"])
             
             # Verificar que existe la columna NRO. CRUCE antes de usarla
             if "NRO. CRUCE" in df.columns:
-                # Un producto está facturado pero no despachado si tiene NRO CRUCE pero no está entregado
-                df["IS_FACTURADO_NO_DESPACHADO"] = (df["NRO. CRUCE"].notna()) & (~df["IS_ENTREGADO"])
+                # Convertir a numérico primero para detectar tanto 0 como 0.0
+                df["NRO_CRUCE_NUMERIC"] = pd.to_numeric(df["NRO. CRUCE"], errors='coerce')
+                
+                # Un producto NO está facturado si:
+                # - El valor numérico es 0 (incluye 0.0, 0, etc.)
+                # - Es NaN (valores faltantes o no numéricos)
+                df["IS_NO_FACTURADO"] = (df["NRO_CRUCE_NUMERIC"] == 0) | (df["NRO_CRUCE_NUMERIC"].isna())
+                df["IS_FACTURADO"] = ~df["IS_NO_FACTURADO"]
+                
+                # Limpiar columna temporal
+                df.drop("NRO_CRUCE_NUMERIC", axis=1, inplace=True)
+                
+                # Un producto está facturado pero no despachado si está facturado pero no está entregado
+                df["IS_FACTURADO_NO_DESPACHADO"] = (df["IS_FACTURADO"]) & (~df["IS_ENTREGADO"])
             else:
                 df["IS_FACTURADO_NO_DESPACHADO"] = False
-        
-        st.write(f"**Registros después del procesamiento:** {len(df)}")
+                df["IS_NO_FACTURADO"] = False
+                df["IS_FACTURADO"] = False
         
         return df
     except Exception as e:
@@ -219,6 +252,8 @@ def create_kpi_metrics(df):
         entregados = df["IS_ENTREGADO"].sum() if "IS_ENTREGADO" in df.columns else 0
         no_entregados = total_despachos - entregados
         facturado_no_desp = df["IS_FACTURADO_NO_DESPACHADO"].sum() if "IS_FACTURADO_NO_DESPACHADO" in df.columns else 0
+        no_facturados = df["IS_NO_FACTURADO"].sum() if "IS_NO_FACTURADO" in df.columns else 0
+        facturados = df["IS_FACTURADO"].sum() if "IS_FACTURADO" in df.columns else 0
         
         tasa_entrega = (entregados / total_despachos * 100) if total_despachos > 0 else 0
         tiempo_promedio = df["TIEMPO_DESPACHO_DIAS"].mean() if "TIEMPO_DESPACHO_DIAS" in df.columns else 0
@@ -230,6 +265,8 @@ def create_kpi_metrics(df):
             "entregados": entregados,
             "no_entregados": no_entregados,
             "facturado_no_desp": facturado_no_desp,
+            "no_facturados": no_facturados,
+            "facturados": facturados,
             "tasa_entrega": tasa_entrega,
             "tiempo_promedio": tiempo_promedio,
             "costo_promedio": costo_promedio
@@ -281,19 +318,12 @@ def main():
         
         st.success(f"✅ Datos cargados exitosamente: {len(df)} registros")
         
-        # Mostrar información de columnas detectadas
-        with st.expander("ℹ️ Información de columnas detectadas"):
-            st.write("**Columnas disponibles:**")
-            col_list = ", ".join(df.columns.tolist())
-            st.text(col_list)
-        
         # ==========================
         # FILTROS AVANZADOS
         # ==========================
         df_filtered = apply_filters(df)
         
         if df_filtered is not None and len(df_filtered) > 0:
-            st.write(f"**Registros después de filtros:** {len(df_filtered)}")
             
             # ==========================
             # KPI DASHBOARD
@@ -324,6 +354,12 @@ def main():
             # ANÁLISIS POR CANAL DE VENTA
             # ==========================
             show_channel_analysis(df_filtered)
+
+            # ==========================
+            # ANÁLISIS POR CIUDAD
+            # ==========================
+            if "CIUDAD" in df_filtered.columns:
+                show_city_analysis(df_filtered)
             
             # ==========================
             # ANÁLISIS POR VENDEDOR
@@ -373,7 +409,7 @@ def apply_filters(df):
         if "CANAL_VENTA" in df.columns:
             canales = sorted([str(x) for x in df["CANAL_VENTA"].dropna().unique() if str(x) != "nan"])
             if canales:
-                canal_selec = st.sidebar.multiselect("Canal de Venta", canales, default=canales)
+                canal_selec = st.sidebar.multiselect("Canal de Venta", canales, default=[])
                 if canal_selec:
                     df = df[df["CANAL_VENTA"].isin(canal_selec)]
         
@@ -381,7 +417,7 @@ def apply_filters(df):
         if "ALISTAMIENTO" in df.columns:
             alistadores = sorted([str(x) for x in df["ALISTAMIENTO"].dropna().unique() if str(x) != "nan"])
             if alistadores:
-                alistador_selec = st.sidebar.multiselect("Logístico", alistadores, default=alistadores)
+                alistador_selec = st.sidebar.multiselect("Logístico", alistadores, default=[])
                 if alistador_selec:
                     df = df[df["ALISTAMIENTO"].isin(alistador_selec)]
         
@@ -389,7 +425,7 @@ def apply_filters(df):
         if "ESTATUS_CLEAN" in df.columns:
             estatus_options = sorted([str(x) for x in df["ESTATUS_CLEAN"].unique() if str(x) != "nan"])
             if estatus_options:
-                estatus_selec = st.sidebar.multiselect("Estatus", estatus_options, default=estatus_options)
+                estatus_selec = st.sidebar.multiselect("Estatus", estatus_options, default=[])
                 if estatus_selec:
                     df = df[df["ESTATUS_CLEAN"].isin(estatus_selec)]
         
@@ -399,9 +435,17 @@ def apply_filters(df):
             if vendedores:
                 # Limitar a máximo 10 por defecto para evitar sobrecarga
                 default_vendedores = vendedores[:10] if len(vendedores) > 10 else vendedores
-                vendedor_selec = st.sidebar.multiselect("Vendedor", vendedores, default=default_vendedores)
+                vendedor_selec = st.sidebar.multiselect("Vendedor", vendedores, default=[])
                 if vendedor_selec:
                     df = df[df["VENDEDOR_NOMBRE"].isin(vendedor_selec)]
+
+        # Filtro por ciudad
+        if "CIUDAD" in df.columns:
+            ciudades = sorted([str(x) for x in df["CIUDAD"].dropna().unique() if str(x) != "nan"])
+            if ciudades:
+                ciudad_selec = st.sidebar.multiselect("Ciudad", ciudades, default=[])
+                if ciudad_selec:
+                    df = df[df["CIUDAD"].isin(ciudad_selec)]
         
         return df
     except Exception as e:
@@ -413,7 +457,7 @@ def show_kpi_dashboard(df):
     st.subheader("📊 Resumen Ejecutivo")
     kpis = create_kpi_metrics(df)
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("📦 Total Despachos", f"{kpis['total_despachos']:,}")
         st.metric("⏱️ Tiempo Promedio", f"{kpis['tiempo_promedio']:.1f} días")
@@ -424,8 +468,11 @@ def show_kpi_dashboard(df):
         st.metric("❌ No Entregados", f"{kpis['no_entregados']:,}")
         st.metric("🚨 Fact. No Desp.", f"{kpis['facturado_no_desp']:,}")
     with col4:
-        st.metric("💰 Costo Total", format_currency(kpis['total_costo']))
-        st.metric("💵 Costo Promedio", format_currency(kpis['costo_promedio']))
+        st.metric("📋 Facturados", f"{kpis['facturados']:,}")
+        st.metric("📄 No Facturados", f"{kpis['no_facturados']:,}")
+    with col5:
+        st.metric("💰 Costo Total Fletes", format_currency(kpis['total_costo']))
+        st.metric("💵 Costo Promedio Fletes", format_currency(kpis['costo_promedio']))
     
     st.markdown("---")
 
@@ -667,6 +714,64 @@ def show_channel_analysis(df):
     
     except Exception as e:
         st.warning(f"Error en análisis de canales: {str(e)}")
+
+def show_city_analysis(df):
+    """Muestra análisis por ciudad"""
+    if "CIUDAD" not in df.columns:
+        return
+        
+    st.subheader("🏙️ Análisis por Ciudad")
+    
+    try:
+        # Resumen por ciudad
+        resumen_data = []
+        for ciudad in df["CIUDAD"].dropna().unique():
+            subset = df[df["CIUDAD"] == ciudad]
+            
+            data = {
+                "CIUDAD": ciudad,
+                "Total_Despachos": len(subset),
+                "Entregados": subset.get("IS_ENTREGADO", pd.Series()).sum(),
+                "Costo_Total": subset.get("COSTO FLETE", pd.Series()).sum(),
+                "Costo_Promedio": subset.get("COSTO FLETE", pd.Series()).mean(),
+                "Tiempo_Prom_Dias": subset.get("TIEMPO_DESPACHO_DIAS", pd.Series()).mean()
+            }
+            data["Tasa_Entrega_%"] = (data["Entregados"] / data["Total_Despachos"] * 100) if data["Total_Despachos"] > 0 else 0
+            resumen_data.append(data)
+        
+        resumen_ciudad = pd.DataFrame(resumen_data).fillna(0).round(2)
+        
+        # Formatear costos en la tabla
+        resumen_display = resumen_ciudad.copy()
+        resumen_display["Costo_Total"] = resumen_display["Costo_Total"].apply(format_currency)
+        resumen_display["Costo_Promedio"] = resumen_display["Costo_Promedio"].apply(format_currency)
+        
+        st.dataframe(resumen_display, use_container_width=True)
+        
+        if not resumen_ciudad.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_ciudad = px.pie(
+                    resumen_ciudad,
+                    values="Total_Despachos",
+                    names="CIUDAD",
+                    title="Distribución de Despachos por Ciudad"
+                )
+                st.plotly_chart(fig_ciudad, use_container_width=True)
+            
+            with col2:
+                fig_ciudad_costo = px.bar(
+                    resumen_ciudad,
+                    x="CIUDAD",
+                    y="Costo_Total",
+                    title="Costo Total por Ciudad"
+                )
+                fig_ciudad_costo.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_ciudad_costo, use_container_width=True)
+    
+    except Exception as e:
+        st.warning(f"Error en análisis de ciudades: {str(e)}")
 
 def show_seller_analysis(df):
     """Muestra análisis por vendedor"""

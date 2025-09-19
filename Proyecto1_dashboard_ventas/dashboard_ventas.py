@@ -11,11 +11,6 @@ import plotly.graph_objects as go
 # ==========================
 st.set_page_config(page_title="Dashboard Ejecutivo - Ekonomodo", layout="wide")
 
-# Logo en la esquina superior
-top_col1, top_col2 = st.columns([0.7,0.3])
-with top_col2:
-    st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
-
 st.title("📊 Dashboard Ejecutivo de Ventas — Ekonomodo")
 st.caption("Fuente: Siigo – Ventas mensuales por producto")
 
