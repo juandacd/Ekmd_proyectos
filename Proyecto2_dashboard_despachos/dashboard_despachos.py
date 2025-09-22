@@ -46,14 +46,29 @@ def load_and_process_data(uploaded_file):
         }
         df.rename(columns=column_mapping, inplace=True)
         
-        # Procesar fechas - ser más flexible con formatos
+        # Procesar fechas - formato día/mes/año
         date_columns = ["FECHA_FACTURA", "FECHA DESPACHO"]
         for col in date_columns:
             if col in df.columns:
-                # Intentar múltiples formatos de fecha
-                df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-                if df[col].isna().all():
-                    st.warning(f"No se pudieron procesar las fechas en la columna {col}")
+                # Intentar múltiples formatos con prioridad en día/mes/año
+                try:
+                    # Primero intentar con dayfirst=True (día/mes/año)
+                    df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True, format="%d/%m/%Y")
+                    
+                    # Si hay muchos NaN, intentar otros formatos comunes
+                    if df[col].isna().sum() > len(df) * 0.5:  # Si más del 50% son NaN
+                        df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
+                    
+                    if df[col].isna().all():
+                        st.warning(f"No se pudieron procesar las fechas en la columna {col}")
+                    else:
+                        fechas_procesadas = df[col].notna().sum()
+                        st.info(f"✅ Procesadas {fechas_procesadas} fechas en columna {col}")
+                        
+                except Exception as e:
+                    st.warning(f"Error procesando fechas en {col}: {str(e)}")
+                    # Fallback: intentar sin formato específico
+                    df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
 
         # Limpiar espacios en ALISTAMIENTO
         if "ALISTAMIENTO" in df.columns:
@@ -95,7 +110,7 @@ def load_and_process_data(uploaded_file):
             df["COSTO FLETE"] = df["COSTO FLETE"].str.replace(',', '.')
             # Convertir a numérico
             df["COSTO FLETE"] = pd.to_numeric(df["COSTO FLETE"], errors="coerce").fillna(0)
-        
+            
         # Lista de plataformas conocidas
         plataformas_conocidas = [
             "PAGINA WEB", "FALABELLA", "SODIMAC", "ADDI", "AGAVAL",
@@ -122,12 +137,12 @@ def load_and_process_data(uploaded_file):
             df.drop(columns=["PLATAFORMA_CLEAN"], inplace=True)
         
         # Crear variables temporales
-        if "FECHA_DESPACHO" in df.columns:
-            mask_fecha_valida = df["FECHA_DESPACHO"].notna()
-            df.loc[mask_fecha_valida, "AÑO"] = df.loc[mask_fecha_valida, "FECHA_DESPACHO"].dt.year
-            df.loc[mask_fecha_valida, "MES"] = df.loc[mask_fecha_valida, "FECHA_DESPACHO"].dt.month
-            df.loc[mask_fecha_valida, "DIA_SEMANA"] = df.loc[mask_fecha_valida, "FECHA_DESPACHO"].dt.day_name()
-            df.loc[mask_fecha_valida, "SEMANA"] = df.loc[mask_fecha_valida, "FECHA_DESPACHO"].dt.isocalendar().week
+        if "FECHA DESPACHO" in df.columns:
+            mask_fecha_valida = df["FECHA DESPACHO"].notna()
+            df.loc[mask_fecha_valida, "AÑO"] = df.loc[mask_fecha_valida, "FECHA DESPACHO"].dt.year
+            df.loc[mask_fecha_valida, "MES"] = df.loc[mask_fecha_valida, "FECHA DESPACHO"].dt.month
+            df.loc[mask_fecha_valida, "DIA_SEMANA"] = df.loc[mask_fecha_valida, "FECHA DESPACHO"].dt.day_name()
+            df.loc[mask_fecha_valida, "SEMANA"] = df.loc[mask_fecha_valida, "FECHA DESPACHO"].dt.isocalendar().week
         
         # Categorizar estatus - ser más flexible
         if "ESTATUS" in df.columns:
@@ -317,7 +332,7 @@ def main():
                 df = merge_vendedores(df, df_vendedores)
         
         st.success(f"✅ Datos cargados exitosamente: {len(df)} registros")
-        
+   
         # ==========================
         # FILTROS AVANZADOS
         # ==========================
@@ -360,6 +375,12 @@ def main():
             # ==========================
             if "CIUDAD" in df_filtered.columns:
                 show_city_analysis(df_filtered)
+
+            # ==========================
+            # ANÁLISIS TEMPORAL DE COSTOS
+            # ==========================
+            periodo_seleccionado = st.session_state.get('periodo_analisis', 'Todos los datos')
+            show_temporal_cost_analysis(df_filtered, periodo_seleccionado)
             
             # ==========================
             # ANÁLISIS POR VENDEDOR
@@ -381,19 +402,50 @@ def main():
     else:
         show_help_info()
 
+
+
 def apply_filters(df):
     """Aplica todos los filtros seleccionados"""
     st.sidebar.subheader("🔍 Filtros")
     
     try:
-        # Filtros de fecha
-        if "FECHA_DESPACHO" in df.columns:
+        # MOVER ESTO AL PRINCIPIO:
+        # Filtro de período temporal
+        st.sidebar.subheader("📅 Análisis Temporal")
+        periodo_analisis = st.sidebar.selectbox(
+            "Seleccionar período de análisis",
+            ["Todos los datos", "Año actual", "Mes actual", "Semana actual", "Día actual"],
+            index=0
+        )
+        st.session_state['periodo_analisis'] = periodo_analisis
+
+        # Aplicar filtro temporal
+        if "FECHA DESPACHO" in df.columns and periodo_analisis != "Todos los datos":
+            hoy = datetime.now()
+            
+            if periodo_analisis == "Año actual":
+                inicio_periodo = datetime(hoy.year, 1, 1)
+                df = df[df["FECHA DESPACHO"] >= inicio_periodo]
+            elif periodo_analisis == "Mes actual":
+                inicio_periodo = datetime(hoy.year, hoy.month, 1)
+                df = df[df["FECHA DESPACHO"] >= inicio_periodo]
+            elif periodo_analisis == "Semana actual":
+                dias_desde_lunes = hoy.weekday()
+                inicio_semana = hoy - timedelta(days=dias_desde_lunes)
+                inicio_periodo = datetime(inicio_semana.year, inicio_semana.month, inicio_semana.day)
+                df = df[df["FECHA DESPACHO"] >= inicio_periodo]
+            elif periodo_analisis == "Día actual":
+                inicio_periodo = datetime(hoy.year, hoy.month, hoy.day)
+                df = df[df["FECHA DESPACHO"] >= inicio_periodo]
+
+        # Filtros de fecha (rango manual)
+        if "FECHA DESPACHO" in df.columns:
             # Filtrar solo fechas válidas para el rango
-            df_fechas_validas = df[df["FECHA_DESPACHO"].notna()]
+            df_fechas_validas = df[df["FECHA DESPACHO"].notna()]
             
             if len(df_fechas_validas) > 0:
-                fecha_min = df_fechas_validas["FECHA_DESPACHO"].min()
-                fecha_max = df_fechas_validas["FECHA_DESPACHO"].max()
+                fecha_min = df_fechas_validas["FECHA DESPACHO"].min()
+                fecha_max = df_fechas_validas["FECHA DESPACHO"].max()
                 
                 if pd.notna(fecha_min) and pd.notna(fecha_max):
                     fecha_inicio, fecha_fin = st.sidebar.date_input(
@@ -402,9 +454,9 @@ def apply_filters(df):
                         min_value=fecha_min.date(),
                         max_value=fecha_max.date()
                     )
-                    df = df[(df["FECHA_DESPACHO"].dt.date >= fecha_inicio) & 
-                           (df["FECHA_DESPACHO"].dt.date <= fecha_fin)]
-        
+                    df = df[(df["FECHA DESPACHO"].dt.date >= fecha_inicio) & 
+                           (df["FECHA DESPACHO"].dt.date <= fecha_fin)]
+                    
         # Filtro por canal de venta
         if "CANAL_VENTA" in df.columns:
             canales = sorted([str(x) for x in df["CANAL_VENTA"].dropna().unique() if str(x) != "nan"])
@@ -511,15 +563,15 @@ def show_temporal_analysis(df):
     """Muestra análisis temporal"""
     st.subheader("📅 Análisis Temporal")
     
-    if "FECHA_DESPACHO" in df.columns and not df["FECHA_DESPACHO"].isna().all():
+    if "FECHA DESPACHO" in df.columns and not df["FECHA DESPACHO"].isna().all():
         col1, col2 = st.columns(2)
         
         with col1:
             # Despachos por mes
             try:
-                df_fechas_validas = df[df["FECHA_DESPACHO"].notna()]
-                despachos_mes = df_fechas_validas.groupby(df_fechas_validas["FECHA_DESPACHO"].dt.to_period("M")).size().reset_index()
-                despachos_mes["FECHA_DESPACHO"] = despachos_mes["FECHA_DESPACHO"].astype(str)
+                df_fechas_validas = df[df["FECHA DESPACHO"].notna()]
+                despachos_mes = df_fechas_validas.groupby(df_fechas_validas["FECHA DESPACHO"].dt.to_period("M")).size().reset_index()
+                despachos_mes["FECHA DESPACHO"] = despachos_mes["FECHA DESPACHO"].astype(str)
                 despachos_mes.columns = ["Mes", "Cantidad"]
                 
                 fig_temporal = px.line(
@@ -563,15 +615,15 @@ def show_cost_analysis(df):
     
     with col1:
         # Evolución de costos
-        if "FECHA_DESPACHO" in df.columns:
+        if "FECHA DESPACHO" in df.columns:
             try:
-                df_fechas_validas = df[df["FECHA_DESPACHO"].notna()]
-                costos_mes = df_fechas_validas.groupby(df_fechas_validas["FECHA_DESPACHO"].dt.to_period("M"))["COSTO FLETE"].sum().reset_index()
-                costos_mes["FECHA_DESPACHO"] = costos_mes["FECHA_DESPACHO"].astype(str)
+                df_fechas_validas = df[df["FECHA DESPACHO"].notna()]
+                costos_mes = df_fechas_validas.groupby(df_fechas_validas["FECHA DESPACHO"].dt.to_period("M"))["COSTO FLETE"].sum().reset_index()
+                costos_mes["FECHA DESPACHO"] = costos_mes["FECHA DESPACHO"].astype(str)
                 
                 fig_costos = px.line(
                     costos_mes,
-                    x="FECHA_DESPACHO",
+                    x="FECHA DESPACHO",
                     y="COSTO FLETE",
                     title="Evolución Mensual de Costos de Flete"
                 )
@@ -772,6 +824,146 @@ def show_city_analysis(df):
     
     except Exception as e:
         st.warning(f"Error en análisis de ciudades: {str(e)}")
+
+def show_temporal_cost_analysis(df, periodo_seleccionado):
+    """Muestra análisis de costos por período temporal"""
+    
+    if "COSTO FLETE" not in df.columns or "FECHA DESPACHO" not in df.columns:
+        st.error("DEBUG: Saliendo por falta de columnas")
+        return
+        
+    st.subheader(f"💰 Análisis de Gastos en Fletes - {periodo_seleccionado}")
+    
+    try:
+        df_validos = df[(df["FECHA DESPACHO"].notna()) & (df["COSTO FLETE"].fillna(0) > 0)]
+        
+        if df_validos.empty:
+            st.warning("No hay datos de costos válidos para el período seleccionado")
+            return
+        
+        # Métricas del período
+        costo_total_periodo = df_validos["COSTO FLETE"].sum()
+        costo_promedio_periodo = df_validos["COSTO FLETE"].mean()
+        despachos_periodo = len(df_validos)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💰 Gasto Total en Fletes", format_currency(costo_total_periodo))
+        with col2:
+            st.metric("📊 Costo Promedio por Envío", format_currency(costo_promedio_periodo))
+        with col3:
+            st.metric("📦 Total Despachos con Costo", f"{despachos_periodo:,}")
+        
+        # Análisis detallado por sub-períodos
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if periodo_seleccionado in ["Año actual", "Todos los datos"]:
+                # Gastos por mes
+                gastos_mes = df_validos.groupby(df_validos["FECHA DESPACHO"].dt.to_period("M"))["COSTO FLETE"].sum().reset_index()
+                gastos_mes["FECHA DESPACHO"] = gastos_mes["FECHA DESPACHO"].astype(str)
+                
+                fig_gastos_mes = px.bar(
+                    gastos_mes,
+                    x="FECHA DESPACHO",
+                    y="COSTO FLETE",
+                    title="Gastos en Fletes por Mes"
+                )
+                fig_gastos_mes.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_gastos_mes, use_container_width=True)
+            
+            elif periodo_seleccionado == "Mes actual":
+                # Gastos por día del mes actual solamente
+                gastos_dia = df_validos.groupby(df_validos["FECHA DESPACHO"].dt.date)["COSTO FLETE"].sum().reset_index()
+                gastos_dia["DIA"] = gastos_dia["FECHA DESPACHO"].dt.day
+                gastos_dia = gastos_dia.sort_values("FECHA DESPACHO")
+                
+                fig_gastos_dia = px.bar(
+                    gastos_dia,
+                    x="DIA",
+                    y="COSTO FLETE",
+                    title=f"Gastos en Fletes por Día - {datetime.now().strftime('%B %Y')}",
+                    labels={"DIA": "Día del Mes", "COSTO FLETE": "Costo Flete"}
+                )
+                st.plotly_chart(fig_gastos_dia, use_container_width=True)
+        
+        with col2:
+            # Gastos por canal en el período
+            if "CANAL_VENTA" in df_validos.columns:
+                gastos_canal = df_validos.groupby("CANAL_VENTA")["COSTO FLETE"].sum().reset_index()
+                gastos_canal = gastos_canal.sort_values("COSTO FLETE", ascending=False)
+                
+                fig_gastos_canal = px.pie(
+                    gastos_canal,
+                    values="COSTO FLETE",
+                    names="CANAL_VENTA",
+                    title="Distribución de Gastos por Canal"
+                )
+                st.plotly_chart(fig_gastos_canal, use_container_width=True)
+        
+        # Tabla detallada de gastos por categoría
+        st.subheader("📊 Desglose Detallado de Gastos")
+        
+        categorias_gastos = []
+        
+        # Por logístico
+        if "ALISTAMIENTO" in df_validos.columns:
+            for alistamiento in df_validos["ALISTAMIENTO"].dropna().unique():
+                subset = df_validos[df_validos["ALISTAMIENTO"] == alistamiento]
+                categorias_gastos.append({
+                    "Categoría": "Logístico",
+                    "Nombre": alistamiento,
+                    "Gasto_Total": subset["COSTO FLETE"].sum(),
+                    "Promedio_Envío": subset["COSTO FLETE"].mean(),
+                    "Cantidad_Envíos": len(subset)
+                })
+        
+        # Por canal
+        if "CANAL_VENTA" in df_validos.columns:
+            for canal in df_validos["CANAL_VENTA"].dropna().unique():
+                subset = df_validos[df_validos["CANAL_VENTA"] == canal]
+                categorias_gastos.append({
+                    "Categoría": "Canal",
+                    "Nombre": canal,
+                    "Gasto_Total": subset["COSTO FLETE"].sum(),
+                    "Promedio_Envío": subset["COSTO FLETE"].mean(),
+                    "Cantidad_Envíos": len(subset)
+                })
+        
+        # Por ciudad
+        if "CIUDAD" in df_validos.columns:
+            for ciudad in df_validos["CIUDAD"].dropna().unique():
+                subset = df_validos[df_validos["CIUDAD"] == ciudad]
+                categorias_gastos.append({
+                    "Categoría": "Ciudad",
+                    "Nombre": ciudad,
+                    "Gasto_Total": subset["COSTO FLETE"].sum(),
+                    "Promedio_Envío": subset["COSTO FLETE"].mean(),
+                    "Cantidad_Envíos": len(subset)
+                })
+        
+        if categorias_gastos:
+            df_categorias = pd.DataFrame(categorias_gastos).round(2)
+            df_categorias = df_categorias.sort_values("Gasto_Total", ascending=False)
+            
+            # Formatear costos
+            df_categorias_display = df_categorias.copy()
+            df_categorias_display["Gasto_Total"] = df_categorias_display["Gasto_Total"].apply(format_currency)
+            df_categorias_display["Promedio_Envío"] = df_categorias_display["Promedio_Envío"].apply(format_currency)
+            
+            st.dataframe(df_categorias_display, use_container_width=True)
+            
+            # Descarga del reporte
+            csv = df_categorias.to_csv(index=False)
+            st.download_button(
+                label=f"📥 Descargar reporte de gastos - {periodo_seleccionado}",
+                data=csv,
+                file_name=f"reporte_gastos_fletes_{periodo_seleccionado.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+    
+    except Exception as e:
+        st.warning(f"Error en análisis temporal de costos: {str(e)}")
 
 def show_seller_analysis(df):
     """Muestra análisis por vendedor"""
