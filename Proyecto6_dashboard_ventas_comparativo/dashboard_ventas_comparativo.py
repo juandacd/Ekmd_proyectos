@@ -5,17 +5,17 @@ import seaborn as sns
 from datetime import datetime
 import numpy as np
 
+# Logo en la esquina superior
+top_col1, top_col2 = st.columns([0.7,0.3])
+with top_col2:
+    st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
+
 # Configuración de la página
 st.set_page_config(
     page_title="Dashboard Comparativo Ventas", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Logo en la esquina superior
-top_col1, top_col2 = st.columns([0.7,0.3])
-with top_col2:
-    st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
 
 # Estilos personalizados
 st.markdown("""
@@ -75,38 +75,39 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
             return None
         if not validate_columns(df_ventas, ["NRO", "FECHA", "GRAVADAS IVA"], f"Libro de ventas {year}"):
             return None
+        # Hacer auxiliar opcional
+        for col in ["NRO. CRUCE", "COMPROBA", "REFERENCIA", "VEND"]:
+            if col not in df_aux.columns:
+                df_aux[col] = None
         if not validate_columns(df_comercios, ["Z", "Nombre"], "Comercios"):
             return None
         
-        # Cruzar auxiliar con ventas
-        df = pd.merge(df_aux, df_ventas, left_on="NRO. CRUCE", right_on="NRO", how="inner", suffixes=('_aux', '_ventas'))
-        
+        # Usar Libro de ventas como base principal
+        df = pd.merge(df_ventas, df_aux, left_on="NRO", right_on="NRO. CRUCE", how="left", suffixes=('', '_aux'))
+        # Eliminar duplicados por NRO
+        df = df.drop_duplicates(subset=['NRO'], keep='first')
+
+        # # Diagnóstico
+        # registros_libro = len(df_ventas)
+        # registros_auxiliar = len(df_aux)
+        # registros_finales = len(df)
+        # registros_con_auxiliar = len(df.dropna(subset=['COMPROBA']))
+        # st.info(f"📊 Diagnóstico {year}: Libro={registros_libro:,}, Auxiliar={registros_auxiliar:,}, Final={registros_finales:,}, Con datos auxiliar={registros_con_auxiliar:,}")
+
+        # Eliminar duplicados por NRO para evitar múltiples registros del mismo auxiliar
+        df = df.drop_duplicates(subset=['NRO'], keep='first')
+
+        # Resetear índice después de eliminar duplicados
+        df = df.reset_index(drop=True)
+
         if df.empty:
             st.warning(f"⚠️ No se encontraron coincidencias entre auxiliar y ventas para {year}")
             return None
         
-        # Procesar fechas - buscar la columna que contenga "FECHA" sin otros caracteres
-        fecha_col = None
-        for col in df.columns:
-            col_limpio = col.strip()
-            if col_limpio == "FECHA":
-                fecha_col = col
-                break
-
-        if fecha_col is None:
-            # Si no encuentra exactamente "FECHA", buscar la que más se parezca
-            for col in df.columns:
-                if "FECHA" in col and "PAC" not in col and "ENT" not in col:
-                    fecha_col = col
-                    break
-
-        if fecha_col is None:
-            st.error(f"No se encontró la columna 'FECHA' en auxiliar {year}. Columnas disponibles: {list(df.columns)}")
-            return None
-
-        # Usar la fecha del libro de ventas en lugar de auxiliar
-        df["FECHA"] = pd.to_datetime(df["FECHA_ventas"], errors="coerce")
-        df = df.dropna(subset=["FECHA"])  # Eliminar registros sin fecha válida
+        # Usar fecha del libro de ventas directamente
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        
+        df = df.dropna(subset=["FECHA"])
         
         # Crear columnas de tiempo
         df["mes"] = df["FECHA"].dt.strftime("%m")  # Solo el número del mes (01, 02, 03...)
@@ -119,8 +120,48 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
         df["COMPROBA"] = df["COMPROBA"].astype(str).str.strip()
         df_comercios["Z"] = df_comercios["Z"].astype(str).str.strip()
         
-        # Cruzar con comercios
+        # Cruzar con comercios (mantener el cruce original)
         df = pd.merge(df, df_comercios, left_on="COMPROBA", right_on="Z", how="left")
+
+        # Buscar la columna NOMBRE del Libro que puede tener espacios
+        nombre_col = None
+        for col in df.columns:
+            if col.strip().upper() == "NOMBRE" and col != "Nombre":  # Evitar confusión con Nombre del comercio
+                nombre_col = col
+                break
+
+        if nombre_col:
+            # Solo mapear registros que NO tienen comercio asignado (principalmente devoluciones)
+            def asignar_comercio_por_nombre(nombre_str):
+                if pd.isna(nombre_str):
+                    return "PARTICULAR"
+                
+                nombre_upper = str(nombre_str).upper()
+                
+                if "SODIMAC COLOMBIA" in nombre_upper:
+                    return "Homecenter"
+                elif "ALMACENES EXITO" in nombre_upper:
+                    return "Éxito-Emplea" 
+                elif "TUGO" in nombre_upper:
+                    return "Tugo"
+                elif "ALMACENES MAXIMO" in nombre_upper:
+                    return "Maximo"
+                elif "APER COLOMBIA" in nombre_upper:
+                    return "Aper Colombia"
+                else:
+                    # Buscar coincidencia con nombres de comercios del catálogo Z
+                    for _, row in df_comercios.iterrows():
+                        if str(row["Nombre"]).upper() in nombre_upper:
+                            return row["Nombre"]
+                    return "PARTICULAR"
+
+            # Aplicar solo a registros sin comercio asignado
+            mask_sin_comercio = pd.isna(df["Nombre"])
+            if mask_sin_comercio.sum() > 0:
+                df.loc[mask_sin_comercio, "Nombre"] = df.loc[mask_sin_comercio, nombre_col].apply(asignar_comercio_por_nombre)
+                # st.info(f"📍 {mask_sin_comercio.sum():,} registros mapeados por nombre del cliente")
+        else:
+            st.warning("No se encontró columna NOMBRE en el Libro de ventas para mapear devoluciones")
         
         # Limpiar datos
         df["GRAVADAS IVA"] = pd.to_numeric(df["GRAVADAS IVA"], errors="coerce")
@@ -174,8 +215,19 @@ if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file]):
         if df2024 is None or df2025 is None:
             st.stop()
         
-        # Unir datos
-        df_all = pd.concat([df2024, df2025], ignore_index=True)
+        # Verificar y alinear columnas antes de concatenar
+        cols_2024 = set(df2024.columns)
+        cols_2025 = set(df2025.columns)
+        common_cols = list(cols_2024.intersection(cols_2025))
+
+        # Usar solo las columnas comunes
+        df2024_clean = df2024[common_cols].copy().reset_index(drop=True)
+        df2025_clean = df2025[common_cols].copy().reset_index(drop=True)
+
+        # Concatenar
+        df_all = pd.concat([df2024_clean, df2025_clean], ignore_index=True)
+
+        # st.info(f"Columnas usadas para análisis: {len(common_cols)} columnas comunes")
         
         # Mostrar estadísticas básicas
         st.success(f"✅ Datos procesados exitosamente!")
@@ -242,7 +294,7 @@ if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file]):
 
     resumen_mensual = df_filtrado.groupby(["año", "mes"]).agg({
         "GRAVADAS IVA": "sum",
-        numero_col: "nunique",
+        "NRO": "nunique",
         "CANT.ENTREGA": "sum",
         "REFERENCIA": "nunique"
     }).round(2).reset_index()
@@ -312,50 +364,166 @@ if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file]):
             f"{ordenes_2024:,}"
         )
 
-    # Métricas de devoluciones
-    total_sin_dev_2024 = df_filtrado[(df_filtrado["año"] == 2024) & (df_filtrado["GRAVADAS IVA"] > 0)]["GRAVADAS IVA"].sum()
-    total_sin_dev_2025 = df_filtrado[(df_filtrado["año"] == 2025) & (df_filtrado["GRAVADAS IVA"] > 0)]["GRAVADAS IVA"].sum()
-    devoluciones_2024 = df_filtrado[(df_filtrado["año"] == 2024) & (df_filtrado["GRAVADAS IVA"] < 0)]["GRAVADAS IVA"].sum()
-    devoluciones_2025 = df_filtrado[(df_filtrado["año"] == 2025) & (df_filtrado["GRAVADAS IVA"] < 0)]["GRAVADAS IVA"].sum()
+        # Métricas detalladas incluyendo descuentos
+        ventas_positivas_2024 = df_filtrado[(df_filtrado["año"] == 2024) & (df_filtrado["GRAVADAS IVA"] > 0)]["GRAVADAS IVA"].sum()
+        ventas_positivas_2025 = df_filtrado[(df_filtrado["año"] == 2025) & (df_filtrado["GRAVADAS IVA"] > 0)]["GRAVADAS IVA"].sum()
+        descuentos_2024 = abs(df_filtrado[(df_filtrado["año"] == 2024) & (df_filtrado["GRAVADAS IVA"] < 0)]["GRAVADAS IVA"].sum())
+        descuentos_2025 = abs(df_filtrado[(df_filtrado["año"] == 2025) & (df_filtrado["GRAVADAS IVA"] < 0)]["GRAVADAS IVA"].sum())
+   
+    st.subheader("💰 Desglose Detallado de Ventas")
 
-    st.subheader("📊 Desglose de Ventas y Devoluciones")
-    col1, col2, col3, col4 = st.columns(4)
-
+    # Primera fila - Ventas brutas
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("💚 Ventas sin devoluciones 2025", f"${total_sin_dev_2025:,.0f}")
+        st.metric(
+            "✅ Ventas Brutas 2025", 
+            f"${ventas_positivas_2025:,.0f}",
+            delta=f"${ventas_positivas_2025 - ventas_positivas_2024:,.0f}" if ventas_positivas_2024 > 0 else None
+        )
     with col2:
-        st.metric("💚 Ventas sin devoluciones 2024", f"${total_sin_dev_2024:,.0f}")
-    with col3:
-        st.metric("🔴 Devoluciones 2025", f"${abs(devoluciones_2025):,.0f}")
-    with col4:
-        st.metric("🔴 Devoluciones 2024", f"${abs(devoluciones_2024):,.0f}")
+        st.metric("✅ Ventas Brutas 2024", f"${ventas_positivas_2024:,.0f}")
+
+    # Segunda fila - Descuentos
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(
+            "❌ Devoluciones 2025", 
+            f"${descuentos_2025:,.0f}",
+            delta=f"${descuentos_2025 - descuentos_2024:,.0f}" if descuentos_2024 > 0 else None
+        )
+    with col2:
+        st.metric("❌ Devoluciones 2024", f"${descuentos_2024:,.0f}")
     
     # ==============================
     # TABLAS COMPARATIVAS
     # ==============================
     
     st.subheader("📋 Comparativo Mensual - Montos")
-    st.dataframe(
-        pivot_monto.style.format({
-            2024: "${:,.0f}",
-            2025: "${:,.0f}",
-            "Diferencia": "${:,.0f}",
-            "% Cambio": "{:.1f}%"
-        }).background_gradient(subset=["% Cambio"], cmap="RdYlGn"),
-        use_container_width=True
-    )
+
+    # Verificar qué columnas existen para el formato
+    format_dict = {}
+    if 2024 in pivot_monto.columns:
+        format_dict[2024] = "${:,.0f}"
+    if 2025 in pivot_monto.columns:
+        format_dict[2025] = "${:,.0f}"
+    if "Diferencia" in pivot_monto.columns:
+        format_dict["Diferencia"] = "${:,.0f}"
+    if "% Cambio" in pivot_monto.columns:
+        format_dict["% Cambio"] = "{:.1f}%"
+
+    # Aplicar formato solo si hay columnas de % Cambio
+    if "% Cambio" in pivot_monto.columns:
+        st.dataframe(
+            pivot_monto.style.format(format_dict).background_gradient(subset=["% Cambio"], cmap="RdYlGn"),
+            use_container_width=True
+        )
+    else:
+        st.dataframe(
+            pivot_monto.style.format(format_dict),
+            use_container_width=True
+        )
     
     st.subheader("📋 Comparativo Mensual - Órdenes")
-    st.dataframe(
-        pivot_ordenes.style.format({
-            2024: "{:,.0f}",
-            2025: "{:,.0f}",
-            "Diferencia": "{:,.0f}",
-            "% Cambio": "{:.1f}%"
-        }).background_gradient(subset=["% Cambio"], cmap="RdYlGn"),
-        use_container_width=True
-    )
+
+    # Verificar qué columnas existen para el formato
+    format_dict_ordenes = {}
+    if 2024 in pivot_ordenes.columns:
+        format_dict_ordenes[2024] = "{:,.0f}"
+    if 2025 in pivot_ordenes.columns:
+        format_dict_ordenes[2025] = "{:,.0f}"
+    if "Diferencia" in pivot_ordenes.columns:
+        format_dict_ordenes["Diferencia"] = "{:,.0f}"
+    if "% Cambio" in pivot_ordenes.columns:
+        format_dict_ordenes["% Cambio"] = "{:.1f}%"
+
+    # Aplicar formato solo si hay columnas de % Cambio
+    if "% Cambio" in pivot_ordenes.columns:
+        st.dataframe(
+            pivot_ordenes.style.format(format_dict_ordenes).background_gradient(subset=["% Cambio"], cmap="RdYlGn"),
+            use_container_width=True
+        )
+    else:
+        st.dataframe(
+            pivot_ordenes.style.format(format_dict_ordenes),
+            use_container_width=True
+        )
     
+    # ==============================
+    # ANÁLISIS DETALLADO DE DEVOLUCIONES
+    # ==============================
+
+    st.subheader("🔍 Análisis Detallado de Devoluciones")
+
+    # Crear tabs para diferentes vistas
+    tab1, tab2, tab3 = st.tabs(["📊 Resumen", "📋 Detalle por Mes", "🏪 Detalle por Comercio"])
+
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Devoluciones 2025**")
+            devoluciones_count_2025 = len(df_filtrado[(df_filtrado["año"] == 2025) & (df_filtrado["GRAVADAS IVA"] < 0)])
+            st.metric("Cantidad de devoluciones", f"{devoluciones_count_2025:,}")
+            if total_2025 != 0:
+                porcentaje_dev_2025 = (descuentos_2025 / abs(total_2025 + descuentos_2025)) * 100
+                st.metric("% sobre ventas brutas", f"{porcentaje_dev_2025:.2f}%")
+        
+        with col2:
+            st.markdown("**Devoluciones 2024**")
+            devoluciones_count_2024 = len(df_filtrado[(df_filtrado["año"] == 2024) & (df_filtrado["GRAVADAS IVA"] < 0)])
+            st.metric("Cantidad de devoluciones", f"{devoluciones_count_2024:,}")
+            if total_2024 != 0:
+                porcentaje_dev_2024 = (descuentos_2024 / abs(total_2024 + descuentos_2024)) * 100
+                st.metric("% sobre ventas brutas", f"{porcentaje_dev_2024:.2f}%")
+
+    with tab2:
+        # Devoluciones por mes
+        devoluciones_mes = df_filtrado[df_filtrado["GRAVADAS IVA"] < 0].groupby(["año", "mes"]).agg({
+            "GRAVADAS IVA": ["sum", "count"],
+            "NRO": "nunique"
+        }).round(2).reset_index()
+        
+        devoluciones_mes.columns = ["año", "mes", "monto_devolucion", "cantidad_registros", "facturas_unicas"]
+        devoluciones_mes["monto_devolucion"] = abs(devoluciones_mes["monto_devolucion"])
+        
+        if not devoluciones_mes.empty:
+            pivot_dev = devoluciones_mes.pivot(index="mes", columns="año", values="monto_devolucion").fillna(0)
+            st.dataframe(
+                pivot_dev.style.format("${:,.0f}"),
+                use_container_width=True
+            )
+        else:
+            st.info("No hay devoluciones en el período/filtro seleccionado")
+
+    with tab3:
+        # Devoluciones por comercio (solo si no hay filtro de comercio)
+        if comercio_sel == "Todos":
+            dev_comercio = df_filtrado[df_filtrado["GRAVADAS IVA"] < 0].groupby(["Nombre", "año"]).agg({
+                "GRAVADAS IVA": ["sum", "count"]
+            }).round(2).reset_index()
+            
+            dev_comercio.columns = ["Comercio", "año", "monto_devolucion", "cantidad"]
+            dev_comercio["monto_devolucion"] = abs(dev_comercio["monto_devolucion"])
+            
+            if not dev_comercio.empty:
+                pivot_dev_comercio = dev_comercio.pivot(index="Comercio", columns="año", values="monto_devolucion").fillna(0)
+                st.dataframe(
+                    pivot_dev_comercio.style.format("${:,.0f}"),
+                    use_container_width=True
+                )
+            else:
+                st.info("No hay devoluciones por comercio en el período seleccionado")
+        else:
+            # Mostrar devoluciones del comercio seleccionado por mes
+            dev_comercio_detalle = df_filtrado[df_filtrado["GRAVADAS IVA"] < 0]
+            if not dev_comercio_detalle.empty:
+                st.dataframe(
+                    dev_comercio_detalle[["mes_nombre", "NRO", "GRAVADAS IVA", "REFERENCIA"]].sort_values("mes_nombre"),
+                    use_container_width=True
+                )
+            else:
+                st.info(f"No hay devoluciones registradas para {comercio_sel}")     
+
     # ==============================
     # GRÁFICOS
     # ==============================
@@ -539,13 +707,7 @@ else:
     """)
     
     st.markdown("---")
-    st.markdown("### ℹ️ Información sobre las columnas requeridas:")
-    
-    with st.expander("📊 Ventas por facturas emitidas"):
-        st.markdown("""
-        - **NUMERO**: Número de factura (para cruce con auxiliar)
-        - **GRAVADAS IVA**: Valor real de las ventas
-        """)
+    st.markdown("### ℹ️ Información sobre las columnas requeridas:")  
     
     with st.expander("📋 Auxiliar por número"):
         st.markdown("""
@@ -561,4 +723,11 @@ else:
         st.markdown("""
         - **Z**: Código del comercio (para cruce con COMPROBA)
         - **Nombre**: Nombre del comercio (Sodimac, Falabella, etc.)
+        """)
+
+    with st.expander("📊 Libro de ventas"):
+        st.markdown("""
+        - **NRO**: Número de factura (para cruce con auxiliar)
+        - **FECHA**: Fecha de la transacción
+        - **GRAVADAS IVA**: Valor de la venta (positivo=venta, negativo=descuento)
         """)
