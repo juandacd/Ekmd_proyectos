@@ -259,6 +259,42 @@ def format_currency(value):
         return "$0"
     return f"${value:,.0f}"
 
+def show_detailed_selection(df, filter_column, filter_value, title):
+    """Muestra detalles de una selección específica"""
+    st.subheader(f"📋 {title}")
+    
+    # Filtrar datos según la selección
+    df_filtered = df[df[filter_column] == filter_value]
+    
+    # Mostrar métricas rápidas
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Registros", len(df_filtered))
+    with col2:
+        if "IS_ENTREGADO" in df_filtered.columns:
+            entregados = df_filtered["IS_ENTREGADO"].sum()
+            st.metric("Entregados", entregados)
+    with col3:
+        if "COSTO FLETE" in df_filtered.columns:
+            costo_total = df_filtered["COSTO FLETE"].sum()
+            st.metric("Costo Total", format_currency(costo_total))
+    with col4:
+        if "IS_FACTURADO_NO_DESPACHADO" in df_filtered.columns:
+            alertas = df_filtered["IS_FACTURADO_NO_DESPACHADO"].sum()
+            st.metric("🚨 Alertas", alertas, delta_color="inverse")
+    
+    # Mostrar tabla detallada
+    st.dataframe(df_filtered, use_container_width=True, height=400)
+    
+    # Opción de descarga
+    csv = df_filtered.to_csv(index=False)
+    st.download_button(
+        label="📥 Descargar datos filtrados",
+        data=csv,
+        file_name=f"detalle_{filter_value}_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv"
+    )
+
 def create_kpi_metrics(df):
     """Calcula métricas KPI"""
     try:
@@ -650,7 +686,7 @@ def show_cost_analysis(df):
             st.warning(f"Error generando distribución de costos: {str(e)}")
 
 def show_logistics_analysis(df):
-    """Muestra análisis por logístico"""
+    """Muestra análisis por logístico con interactividad"""
     if "ALISTAMIENTO" not in df.columns:
         return
         
@@ -675,6 +711,16 @@ def show_logistics_analysis(df):
         
         resumen_alistamiento = pd.DataFrame(resumen_data).fillna(0).round(2)
         
+        # Selector interactivo de logístico
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            logisticos_list = ["Ver todos"] + sorted(resumen_alistamiento["ALISTAMIENTO"].tolist())
+            logistico_seleccionado = st.selectbox(
+                "🔍 Ver detalles de:",
+                logisticos_list,
+                key="logistico_detail_selector"
+            )
+        
         # Formatear costos en la tabla
         resumen_display = resumen_alistamiento.copy()
         resumen_display["Costo_Total"] = resumen_display["Costo_Total"].apply(format_currency)
@@ -692,7 +738,7 @@ def show_logistics_analysis(df):
                     resumen_alistamiento,
                     x="ALISTAMIENTO",
                     y="Total_Despachos",
-                    title="Despachos por Logístico"
+                    title="Despachos por Logístico (Click para ver detalles)"
                 )
                 fig_logistico.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig_logistico, use_container_width=True)
@@ -706,12 +752,18 @@ def show_logistics_analysis(df):
                 )
                 fig_tasa.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig_tasa, use_container_width=True)
+        
+        # Mostrar detalles si se seleccionó un logístico específico
+        if logistico_seleccionado != "Ver todos":
+            st.markdown("---")
+            show_detailed_selection(df, "ALISTAMIENTO", logistico_seleccionado, 
+                                   f"Detalles de {logistico_seleccionado}")
     
     except Exception as e:
         st.warning(f"Error en análisis de logísticos: {str(e)}")
 
 def show_channel_analysis(df):
-    """Muestra análisis por canal de venta"""
+    """Muestra análisis por canal de venta con interactividad"""
     if "CANAL_VENTA" not in df.columns:
         return
         
@@ -735,6 +787,16 @@ def show_channel_analysis(df):
         
         resumen_canal = pd.DataFrame(resumen_data).fillna(0).round(2)
         
+        # Selector interactivo de canal
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            canales_list = ["Ver todos"] + sorted(resumen_canal["CANAL_VENTA"].tolist())
+            canal_seleccionado = st.selectbox(
+                "🔍 Ver detalles de:",
+                canales_list,
+                key="canal_detail_selector"
+            )
+        
         # Formatear costos en la tabla
         resumen_display = resumen_canal.copy()
         resumen_display["Costo_Total"] = resumen_display["Costo_Total"].apply(format_currency)
@@ -750,7 +812,7 @@ def show_channel_analysis(df):
                     resumen_canal,
                     values="Total_Despachos",
                     names="CANAL_VENTA",
-                    title="Distribución de Despachos por Canal"
+                    title="Distribución de Despachos por Canal (Click para detalles)"
                 )
                 st.plotly_chart(fig_canal, use_container_width=True)
             
@@ -763,12 +825,18 @@ def show_channel_analysis(df):
                 )
                 fig_canal_costo.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig_canal_costo, use_container_width=True)
+        
+        # Mostrar detalles si se seleccionó un canal específico
+        if canal_seleccionado != "Ver todos":
+            st.markdown("---")
+            show_detailed_selection(df, "CANAL_VENTA", canal_seleccionado, 
+                                   f"Detalles de {canal_seleccionado}")
     
     except Exception as e:
         st.warning(f"Error en análisis de canales: {str(e)}")
 
 def show_city_analysis(df):
-    """Muestra análisis por ciudad"""
+    """Muestra análisis por ciudad con interactividad"""
     if "CIUDAD" not in df.columns:
         return
         
@@ -793,6 +861,16 @@ def show_city_analysis(df):
         
         resumen_ciudad = pd.DataFrame(resumen_data).fillna(0).round(2)
         
+        # Selector interactivo de ciudad
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            ciudades_list = ["Ver todos"] + sorted(resumen_ciudad["CIUDAD"].tolist())
+            ciudad_seleccionada = st.selectbox(
+                "🔍 Ver detalles de:",
+                ciudades_list,
+                key="ciudad_detail_selector"
+            )
+        
         # Formatear costos en la tabla
         resumen_display = resumen_ciudad.copy()
         resumen_display["Costo_Total"] = resumen_display["Costo_Total"].apply(format_currency)
@@ -808,7 +886,7 @@ def show_city_analysis(df):
                     resumen_ciudad,
                     values="Total_Despachos",
                     names="CIUDAD",
-                    title="Distribución de Despachos por Ciudad"
+                    title="Distribución de Despachos por Ciudad (Click para detalles)"
                 )
                 st.plotly_chart(fig_ciudad, use_container_width=True)
             
@@ -821,6 +899,12 @@ def show_city_analysis(df):
                 )
                 fig_ciudad_costo.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig_ciudad_costo, use_container_width=True)
+        
+        # Mostrar detalles si se seleccionó una ciudad específica
+        if ciudad_seleccionada != "Ver todos":
+            st.markdown("---")
+            show_detailed_selection(df, "CIUDAD", ciudad_seleccionada, 
+                                   f"Detalles de {ciudad_seleccionada}")
     
     except Exception as e:
         st.warning(f"Error en análisis de ciudades: {str(e)}")
@@ -966,7 +1050,7 @@ def show_temporal_cost_analysis(df, periodo_seleccionado):
         st.warning(f"Error en análisis temporal de costos: {str(e)}")
 
 def show_seller_analysis(df):
-    """Muestra análisis por vendedor"""
+    """Muestra análisis por vendedor con interactividad"""
     st.subheader("🤝 Análisis por Vendedor")
     
     try:
@@ -987,35 +1071,41 @@ def show_seller_analysis(df):
             resumen_data.append(data)
         
         resumen_vendedor = pd.DataFrame(resumen_data).fillna(0).round(2)
-        
-        # Ordenar por total de despachos
         resumen_vendedor = resumen_vendedor.sort_values("Total_Despachos", ascending=False)
+        
+        # Selector interactivo de vendedor
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            vendedores_list = ["Ver todos"] + sorted(resumen_vendedor["VENDEDOR_NOMBRE"].tolist())
+            vendedor_seleccionado = st.selectbox(
+                "🔍 Ver detalles de:",
+                vendedores_list,
+                key="vendedor_detail_selector"
+            )
         
         # Formatear costos en la tabla
         resumen_display = resumen_vendedor.copy()
         resumen_display["Costo_Total"] = resumen_display["Costo_Total"].apply(format_currency)
         resumen_display["Costo_Promedio"] = resumen_display["Costo_Promedio"].apply(format_currency)
         
-        st.dataframe(resumen_display, use_container_width=True)
+        st.dataframe(resumen_display, use_container_width=True, height=300)
         
         if not resumen_vendedor.empty:
             col1, col2 = st.columns(2)
             
             with col1:
-                # Top 10 vendedores por volumen
                 top_vendedores = resumen_vendedor.head(10)
                 fig_top_vendedores = px.bar(
                     top_vendedores,
                     x="Total_Despachos",
                     y="VENDEDOR_NOMBRE",
                     orientation="h",
-                    title="Top 10 Vendedores por Volumen de Despachos"
+                    title="Top 10 Vendedores (Click para detalles)"
                 )
                 fig_top_vendedores.update_layout(height=500)
                 st.plotly_chart(fig_top_vendedores, use_container_width=True)
             
             with col2:
-                # Vendedores por tasa de entrega (solo los que tienen más de 5 despachos)
                 vendedores_relevantes = resumen_vendedor[resumen_vendedor["Total_Despachos"] >= 5].head(10)
                 if not vendedores_relevantes.empty:
                     fig_tasa_vendedores = px.bar(
@@ -1027,10 +1117,16 @@ def show_seller_analysis(df):
                     )
                     fig_tasa_vendedores.update_layout(height=500)
                     st.plotly_chart(fig_tasa_vendedores, use_container_width=True)
+        
+        # Mostrar detalles si se seleccionó un vendedor específico
+        if vendedor_seleccionado != "Ver todos":
+            st.markdown("---")
+            show_detailed_selection(df, "VENDEDOR_NOMBRE", vendedor_seleccionado, 
+                                   f"Detalles de {vendedor_seleccionado}")
     
     except Exception as e:
         st.warning(f"Error en análisis de vendedores: {str(e)}")
-
+        
 def show_time_analysis(df):
     """Muestra análisis de tiempos"""
     if "TIEMPO_DESPACHO_DIAS" not in df.columns:

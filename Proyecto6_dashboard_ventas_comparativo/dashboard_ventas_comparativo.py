@@ -67,11 +67,11 @@ def validate_columns(df, required_cols, file_name):
         return False
     return True
 
-def preparar_datos(df_ventas, df_aux, df_comercios, year):
+def preparar_datos(df_ventas, df_aux, df_comercios, df_vendedores, year):
     """Prepara y cruza los datos de ventas"""
     try:
         # Validar columnas requeridas
-        if not validate_columns(df_aux, ["NRO. CRUCE", "COMPROBA", "FECHA", "CANT.ENTREGA", "REFERENCIA", "VEND"], f"Auxiliar {year}"):
+        if not validate_columns(df_aux, ["NRO. CRUCE", "COMPROBA", "C MP. CR", "FECHA", "CANT.ENTREGA", "REFERENCIA", "VEND"], f"Auxiliar {year}"):
             return None
         if not validate_columns(df_ventas, ["NRO", "FECHA", "GRAVADAS IVA"], f"Libro de ventas {year}"):
             return None
@@ -81,20 +81,30 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
                 df_aux[col] = None
         if not validate_columns(df_comercios, ["Z", "Nombre"], "Comercios"):
             return None
+
+        # Validar vendedores (opcional)
+        if not validate_columns(df_vendedores, ["VENDEDOR", "NOMBRE"], "Vendedores"):
+            st.warning("Archivo de vendedores no válido, se usarán códigos numéricos")
+            df_vendedores = None
         
+        # Buscar columna C MP. CR en auxiliar ANTES del merge
+        cmp_col_aux = None
+        for col in df_aux.columns:
+            if "C MP" in col.upper() and "CR" in col.upper():
+                cmp_col_aux = col
+                break
+
         # Usar Libro de ventas como base principal
         df = pd.merge(df_ventas, df_aux, left_on="NRO", right_on="NRO. CRUCE", how="left", suffixes=('', '_aux'))
-        # Eliminar duplicados por NRO
-        df = df.drop_duplicates(subset=['NRO'], keep='first')
 
-        # # Diagnóstico
-        # registros_libro = len(df_ventas)
-        # registros_auxiliar = len(df_aux)
-        # registros_finales = len(df)
-        # registros_con_auxiliar = len(df.dropna(subset=['COMPROBA']))
-        # st.info(f"📊 Diagnóstico {year}: Libro={registros_libro:,}, Auxiliar={registros_auxiliar:,}, Final={registros_finales:,}, Con datos auxiliar={registros_con_auxiliar:,}")
+        # Si encontramos C MP. CR, verificar que esté en el resultado
+        if cmp_col_aux and cmp_col_aux in df.columns:
+            st.info(f"✓ Columna '{cmp_col_aux}' encontrada y disponible para clasificar Falabella")
+        else:
+            st.warning(f"⚠️ Columna C MP. CR no encontrada en el merge. Columnas disponibles: {[c for c in df.columns if 'MP' in c.upper() or 'CR' in c.upper()]}")
 
-        # Eliminar duplicados por NRO para evitar múltiples registros del mismo auxiliar
+        # Eliminar duplicados por NRO, priorizando registros con datos completos
+        df = df.sort_values('COMPROBA', na_position='last')
         df = df.drop_duplicates(subset=['NRO'], keep='first')
 
         # Resetear índice después de eliminar duplicados
@@ -103,7 +113,7 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
         if df.empty:
             st.warning(f"⚠️ No se encontraron coincidencias entre auxiliar y ventas para {year}")
             return None
-        
+
         # Usar fecha del libro de ventas directamente
         df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
         
@@ -123,6 +133,31 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
         # Cruzar con comercios (mantener el cruce original)
         df = pd.merge(df, df_comercios, left_on="COMPROBA", right_on="Z", how="left")
 
+        # Diferenciar Falabella de Falabella Verde basado en C MP. CR
+        # Buscar la columna C MP. CR que puede tener espacios
+        cmp_col = None
+        for col in df.columns:
+            if "C MP" in col.upper() and "CR" in col.upper():
+                cmp_col = col
+                break
+
+        if cmp_col:
+            # Identificar registros de Falabella (Z-082 o nombre Falabella)
+            mask_falabella = (df["COMPROBA"] == "Z-082") | (df["Nombre"].str.contains("Falabella", case=False, na=False))
+            
+            if mask_falabella.sum() > 0:
+                # Extraer el primer carácter de C MP. CR y convertir a mayúscula
+                df.loc[mask_falabella, "prefijo_temp"] = df.loc[mask_falabella, cmp_col].astype(str).str.strip().str[0].str.upper()
+                
+                # Asignar nombres según el prefijo
+                df.loc[mask_falabella & (df["prefijo_temp"] == "F"), "Nombre"] = "Falabella"
+                df.loc[mask_falabella & (df["prefijo_temp"] == "S"), "Nombre"] = "Falabella Verde"
+                
+                # Limpiar columna temporal
+                df = df.drop(columns=["prefijo_temp"], errors="ignore")
+                
+                st.info(f"📊 Procesados {mask_falabella.sum():,} registros de Falabella (F={len(df[(df['Nombre']=='Falabella') & mask_falabella])}, S={len(df[(df['Nombre']=='Falabella Verde') & mask_falabella])})")
+
         # Buscar la columna NOMBRE del Libro que puede tener espacios
         nombre_col = None
         for col in df.columns:
@@ -132,7 +167,7 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
 
         if nombre_col:
             # Solo mapear registros que NO tienen comercio asignado (principalmente devoluciones)
-            def asignar_comercio_por_nombre(nombre_str):
+            def asignar_comercio_por_nombre(nombre_str, cmp_cr=None):
                 if pd.isna(nombre_str):
                     return "PARTICULAR"
                 
@@ -148,6 +183,16 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
                     return "Maximo"
                 elif "APER COLOMBIA" in nombre_upper:
                     return "Aper Colombia"
+                elif "FALABELLA" in nombre_upper:
+                    # Diferenciar Falabella por C MP. CR si está disponible
+                    if pd.notna(cmp_cr):
+                        prefijo = str(cmp_cr)[0].upper()
+                        if prefijo == "S":
+                            return "Falabella Verde"
+                        else:
+                            return "Falabella"
+                    else:
+                        return "Falabella"  # Por defecto si no hay C MP. CR
                 else:
                     # Buscar coincidencia con nombres de comercios del catálogo Z
                     for _, row in df_comercios.iterrows():
@@ -156,12 +201,46 @@ def preparar_datos(df_ventas, df_aux, df_comercios, year):
                     return "PARTICULAR"
 
             # Aplicar solo a registros sin comercio asignado
+            # Aplicar solo a registros sin comercio asignado
             mask_sin_comercio = pd.isna(df["Nombre"])
             if mask_sin_comercio.sum() > 0:
-                df.loc[mask_sin_comercio, "Nombre"] = df.loc[mask_sin_comercio, nombre_col].apply(asignar_comercio_por_nombre)
-                # st.info(f"📍 {mask_sin_comercio.sum():,} registros mapeados por nombre del cliente")
+                # Buscar columna C MP. CR
+                cmp_col = None
+                for col in df.columns:
+                    if col.strip().upper() == "C MP. CR":
+                        cmp_col = col
+                        break
+                
+                if cmp_col:
+                    df.loc[mask_sin_comercio, "Nombre"] = df.loc[mask_sin_comercio].apply(
+                        lambda row: asignar_comercio_por_nombre(row[nombre_col], row[cmp_col]), axis=1
+                    )
+                else:
+                    df.loc[mask_sin_comercio, "Nombre"] = df.loc[mask_sin_comercio, nombre_col].apply(
+                        lambda x: asignar_comercio_por_nombre(x, None)
+                    )
+
+            # AGREGAR ESTA NORMALIZACIÓN DESPUÉS:
+            # Normalizar nombres de comercios para evitar duplicados
+            df["Nombre"] = df["Nombre"].astype(str)
+            df.loc[df["Nombre"].str.upper() == "PARTICULAR", "Nombre"] = "Particular"
+            # Capitalizar correctamente otros nombres comunes
+            df.loc[df["Nombre"].str.upper() == "HOMECENTER", "Nombre"] = "Homecenter"
+            df.loc[df["Nombre"].str.upper() == "ÉXITO-EMPLEA", "Nombre"] = "Éxito-Emplea"
+            df.loc[df["Nombre"].str.upper() == "TUGO", "Nombre"] = "Tugo"
+            df.loc[df["Nombre"].str.upper() == "MAXIMO", "Nombre"] = "Maximo"
+            df.loc[df["Nombre"].str.upper() == "APER COLOMBIA", "Nombre"] = "Aper Colombia"                
         else:
             st.warning("No se encontró columna NOMBRE en el Libro de ventas para mapear devoluciones")
+
+        # Cruzar con vendedores
+        if df_vendedores is not None:
+            df_vendedores["VENDEDOR"] = df_vendedores["VENDEDOR"].astype(str).str.strip()
+            df["VEND"] = df["VEND"].astype(str).str.strip()
+            df = pd.merge(df, df_vendedores, left_on="VEND", right_on="VENDEDOR", how="left", suffixes=('', '_vendedor'))
+            df["Nombre_Vendedor"] = df["NOMBRE_vendedor"].fillna(f"Vendedor {df['VEND']}")
+        else:
+            df["Nombre_Vendedor"] = "Vendedor " + df["VEND"].astype(str)
         
         # Limpiar datos
         df["GRAVADAS IVA"] = pd.to_numeric(df["GRAVADAS IVA"], errors="coerce")
@@ -189,13 +268,19 @@ aux_2024 = st.sidebar.file_uploader("📋 Auxiliar por número 2024", type=["xls
 ventas_2025 = st.sidebar.file_uploader("📊 Libro de ventas 2025", type=["xlsx", "csv"])
 aux_2025 = st.sidebar.file_uploader("📋 Auxiliar por número 2025", type=["xlsx", "csv"])
 comercios_file = st.sidebar.file_uploader("🏪 Catálogo de Comercios (Z)", type=["xlsx", "csv"])
+vendedores_file = st.sidebar.file_uploader("👤 Catálogo de Vendedores", type=["xlsx", "csv"])
+ventas_vend_2024 = st.sidebar.file_uploader("📊 Ventas por vendedor 2024", type=["xlsx", "csv"])
+dev_vend_2024 = st.sidebar.file_uploader("↩️ Devoluciones por vendedor 2024", type=["xlsx", "csv"])
+ventas_vend_2025 = st.sidebar.file_uploader("📊 Ventas por vendedor 2025", type=["xlsx", "csv"])
+dev_vend_2025 = st.sidebar.file_uploader("↩️ Devoluciones por vendedor 2025", type=["xlsx", "csv"])
 
 # ==============================
 # PROCESAMIENTO PRINCIPAL
 # ==============================
 
-if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file]):
-    
+if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file, vendedores_file, 
+        ventas_vend_2024, dev_vend_2024, ventas_vend_2025, dev_vend_2025]):
+
     with st.spinner("Cargando y procesando archivos..."):
         # Cargar archivos
         df_v24 = load_file(ventas_2024)
@@ -203,14 +288,21 @@ if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file]):
         df_v25 = load_file(ventas_2025)
         df_a25 = load_file(aux_2025)
         df_com = load_file(comercios_file)
+        df_vendedores = load_file(vendedores_file)
+        df_ventas_vend_24 = load_file(ventas_vend_2024)
+        df_dev_vend_24 = load_file(dev_vend_2024)
+        df_ventas_vend_25 = load_file(ventas_vend_2025)
+        df_dev_vend_25 = load_file(dev_vend_2025)
         
         # Verificar que todos los archivos se cargaron correctamente
-        if any(df is None for df in [df_v24, df_a24, df_v25, df_a25, df_com]):
+        if any(df is None for df in [df_v24, df_a24, df_v25, df_a25, df_com, 
+                                    df_ventas_vend_24, df_dev_vend_24, 
+                                    df_ventas_vend_25, df_dev_vend_25]):
             st.stop()
         
         # Preparar datos
-        df2024 = preparar_datos(df_v24, df_a24, df_com, 2024)
-        df2025 = preparar_datos(df_v25, df_a25, df_com, 2025)
+        df2024 = preparar_datos(df_v24, df_a24, df_com, df_vendedores, 2024)
+        df2025 = preparar_datos(df_v25, df_a25, df_com, df_vendedores, 2025)
         
         if df2024 is None or df2025 is None:
             st.stop()
@@ -677,6 +769,140 @@ if all([ventas_2024, aux_2024, ventas_2025, aux_2025, comercios_file]):
                 }).background_gradient(subset=["% Cambio"], cmap="RdYlGn"),
                 use_container_width=True
             )
+
+    # ==============================
+    # ANÁLISIS POR VENDEDORES
+    # ==============================
+
+    st.subheader("👤 Análisis por Vendedores")
+
+    # Preparar datos de vendedores 2024
+    ventas_vend_24_prep = df_ventas_vend_24.copy()
+    ventas_vend_24_prep["año"] = 2024
+    ventas_vend_24_prep["tipo"] = "venta"
+    ventas_vend_24_prep = ventas_vend_24_prep.rename(columns={"CODI": "COD_VENDEDOR", "VALOR VENTA": "VALOR"})
+
+    dev_vend_24_prep = df_dev_vend_24.copy()
+    dev_vend_24_prep["año"] = 2024
+    dev_vend_24_prep["tipo"] = "devolucion"
+    dev_vend_24_prep = dev_vend_24_prep.rename(columns={"COD.VEND": "COD_VENDEDOR"})
+
+    # Preparar datos de vendedores 2025
+    ventas_vend_25_prep = df_ventas_vend_25.copy()
+    ventas_vend_25_prep["año"] = 2025
+    ventas_vend_25_prep["tipo"] = "venta"
+    ventas_vend_25_prep = ventas_vend_25_prep.rename(columns={"CODI": "COD_VENDEDOR", "VALOR VENTA": "VALOR"})
+
+    dev_vend_25_prep = df_dev_vend_25.copy()
+    dev_vend_25_prep["año"] = 2025
+    dev_vend_25_prep["tipo"] = "devolucion"
+    dev_vend_25_prep = dev_vend_25_prep.rename(columns={"COD.VEND": "COD_VENDEDOR"})
+
+    # Consolidar datos
+    df_vendedores_all = pd.concat([
+        ventas_vend_24_prep[["COD_VENDEDOR", "año", "VALOR", "tipo"]],
+        dev_vend_24_prep[["COD_VENDEDOR", "año", "VALOR", "tipo"]],
+        ventas_vend_25_prep[["COD_VENDEDOR", "año", "VALOR", "tipo"]],
+        dev_vend_25_prep[["COD_VENDEDOR", "año", "VALOR", "tipo"]]
+    ], ignore_index=True)
+
+    # Cruzar con nombres de vendedores
+    df_vendedores_all["COD_VENDEDOR"] = df_vendedores_all["COD_VENDEDOR"].astype(str).str.strip()
+    if df_vendedores is not None:
+        df_vendedores["VENDEDOR"] = df_vendedores["VENDEDOR"].astype(str).str.strip()
+        df_vendedores_all = pd.merge(
+            df_vendedores_all, 
+            df_vendedores[["VENDEDOR", "NOMBRE"]], 
+            left_on="COD_VENDEDOR", 
+            right_on="VENDEDOR", 
+            how="left"
+        )
+        df_vendedores_all["Nombre_Vendedor"] = df_vendedores_all["NOMBRE"].fillna("Vendedor " + df_vendedores_all["COD_VENDEDOR"])
+    else:
+        df_vendedores_all["Nombre_Vendedor"] = "Vendedor " + df_vendedores_all["COD_VENDEDOR"]
+
+    # Calcular resumen por vendedor
+    resumen_vendedores = df_vendedores_all.groupby(["Nombre_Vendedor", "año", "tipo"]).agg({
+        "VALOR": "sum"
+    }).reset_index()
+
+    # Pivot para separar ventas y devoluciones
+    resumen_pivot = resumen_vendedores.pivot_table(
+        index=["Nombre_Vendedor", "año"],
+        columns="tipo",
+        values="VALOR",
+        fill_value=0
+    ).reset_index()
+
+    # Calcular ventas netas
+    resumen_pivot["ventas_netas"] = resumen_pivot.get("venta", 0) - resumen_pivot.get("devolucion", 0)
+
+    # Top vendedores por año
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Top 10 Vendedores 2025 (Ventas Netas)**")
+        top_2025 = resumen_pivot[resumen_pivot["año"] == 2025].sort_values("ventas_netas", ascending=False).head(10)
+        if not top_2025.empty:
+            display_2025 = top_2025[["Nombre_Vendedor", "venta", "devolucion", "ventas_netas"]].copy()
+            display_2025.columns = ["Vendedor", "Ventas Brutas", "Devoluciones", "Ventas Netas"]
+            st.dataframe(
+                display_2025.style.format({
+                    "Ventas Brutas": "${:,.0f}",
+                    "Devoluciones": "${:,.0f}",
+                    "Ventas Netas": "${:,.0f}"
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("No hay datos de vendedores para 2025")
+
+    with col2:
+        st.markdown("**Top 10 Vendedores 2024 (Ventas Netas)**")
+        top_2024 = resumen_pivot[resumen_pivot["año"] == 2024].sort_values("ventas_netas", ascending=False).head(10)
+        if not top_2024.empty:
+            display_2024 = top_2024[["Nombre_Vendedor", "venta", "devolucion", "ventas_netas"]].copy()
+            display_2024.columns = ["Vendedor", "Ventas Brutas", "Devoluciones", "Ventas Netas"]
+            st.dataframe(
+                display_2024.style.format({
+                    "Ventas Brutas": "${:,.0f}",
+                    "Devoluciones": "${:,.0f}",
+                    "Ventas Netas": "${:,.0f}"
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("No hay datos de vendedores para 2024")
+
+    # Comparativo año contra año
+    st.markdown("**Comparativo 2024 vs 2025 (Vendedores presentes ambos años)**")
+
+    # Crear pivots por año
+    pivot_2024 = resumen_pivot[resumen_pivot["año"] == 2024].set_index("Nombre_Vendedor")[["ventas_netas"]]
+    pivot_2024.columns = [2024]
+
+    pivot_2025 = resumen_pivot[resumen_pivot["año"] == 2025].set_index("Nombre_Vendedor")[["ventas_netas"]]
+    pivot_2025.columns = [2025]
+
+    # Combinar
+    comparativo_vendedores = pd.merge(pivot_2024, pivot_2025, left_index=True, right_index=True, how="inner")
+
+    if not comparativo_vendedores.empty:
+        comparativo_vendedores["Diferencia"] = comparativo_vendedores[2025] - comparativo_vendedores[2024]
+        comparativo_vendedores["% Cambio"] = ((comparativo_vendedores[2025] - comparativo_vendedores[2024]) / comparativo_vendedores[2024] * 100).round(2)
+        comparativo_vendedores["% Cambio"] = comparativo_vendedores["% Cambio"].replace([np.inf, -np.inf], np.nan)
+        
+        st.dataframe(
+            comparativo_vendedores.sort_values("% Cambio", ascending=False).head(20).style.format({
+                2024: "${:,.0f}",
+                2025: "${:,.0f}",
+                "Diferencia": "${:,.0f}",
+                "% Cambio": "{:.1f}%"
+            }).background_gradient(subset=["% Cambio"], cmap="RdYlGn"),
+            use_container_width=True
+        )
+    else:
+        st.info("No hay vendedores con datos en ambos años para comparar")
     
     # ==============================
     # DATOS DETALLADOS
@@ -704,6 +930,11 @@ else:
     3. **Ventas por facturas emitidas 2025** (Excel/CSV)
     4. **Auxiliar por número 2025** (Excel/CSV)
     5. **Catálogo de Comercios (Z)** (Excel/CSV)
+    6. **Catálogo de Vendedores** (Excel/CSV)
+    7. **Ventas por vendedor 2024** (Excel/CSV)
+    8. **Devoluciones por vendedor 2024** (Excel/CSV)
+    9. **Ventas por vendedor 2025** (Excel/CSV)
+    10. **Devoluciones por vendedor 2025** (Excel/CSV)
     """)
     
     st.markdown("---")
@@ -731,3 +962,9 @@ else:
         - **FECHA**: Fecha de la transacción
         - **GRAVADAS IVA**: Valor de la venta (positivo=venta, negativo=descuento)
         """)
+
+with st.expander("👤 Catálogo de Vendedores"):
+    st.markdown("""
+    - **VENDEDOR**: Código del vendedor (para cruce con VEND)
+    - **NOMBRE**: Nombre del vendedor
+    """)
