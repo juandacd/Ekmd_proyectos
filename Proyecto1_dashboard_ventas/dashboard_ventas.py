@@ -198,13 +198,24 @@ def load_catalog(file_obj, key_col, value_col):
     except Exception as e:
         st.warning(f"Error al cargar catálogo: {e}")
         return None
-
+    
 def merge_catalogs(df, comercios_df, vendedores_df):
     """Une los catálogos con los datos de ventas"""
     result = df.copy()
     
+    # **GUARDAR NOMBRE DEL AUXILIAR ANTES DEL MERGE (SI EXISTE)**
+    nombre_guardado = False
+    if 'NOMBRE' in result.columns:
+        # Verificar que sea una Serie, no un DataFrame
+        if isinstance(result['NOMBRE'], pd.Series):
+            result['NOMBRE_AUX_ORIGINAL'] = result['NOMBRE'].astype(str).str.strip().str.upper()
+            nombre_guardado = True
+        else:
+            # Si es DataFrame, tomar la primera columna
+            result['NOMBRE_AUX_ORIGINAL'] = result['NOMBRE'].iloc[:, 0].astype(str).str.strip().str.upper()
+            nombre_guardado = True
+    
     if comercios_df is not None and 'COMPROBA' in result.columns:
-        # Normalizar COMPROBA antes del merge
         result['COMPROBA'] = result['COMPROBA'].astype(str).str.strip()
         comercios_df['Z'] = comercios_df['Z'].astype(str).str.strip()
         
@@ -217,8 +228,26 @@ def merge_catalogs(df, comercios_df, vendedores_df):
     else:
         result['COMERCIO_NOMBRE'] = result.get('COMPROBA', 'N/D')
     
+    # **REGLA ESPECIAL Z-082 USANDO NOMBRE GUARDADO**
+    if nombre_guardado and 'COMPROBA' in result.columns and 'NOMBRE_AUX_ORIGINAL' in result.columns:
+        mask_z082 = result['COMPROBA'] == 'Z-082'
+        
+        mask_falabella = mask_z082 & result['NOMBRE_AUX_ORIGINAL'].str.contains('FALABELLA', na=False, case=False)
+        result.loc[mask_falabella, 'COMERCIO_NOMBRE'] = 'FALABELLA CT VERDE'
+        
+        mask_seller = mask_z082 & ~result['NOMBRE_AUX_ORIGINAL'].str.contains('FALABELLA', na=False, case=False)
+        result.loc[mask_seller, 'COMERCIO_NOMBRE'] = 'FALABELLA SELLER'
+        
+        # Mostrar contador
+        count_ct_verde = mask_falabella.sum()
+        count_seller = mask_seller.sum()
+        if count_ct_verde > 0 or count_seller > 0:
+            st.info(f"✅ Z-082 clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER")
+        
+        # Limpiar columna temporal
+        result = result.drop(columns=['NOMBRE_AUX_ORIGINAL'], errors='ignore')
+    
     if vendedores_df is not None and 'VEND' in result.columns:
-        # Normalizar VEND antes del merge
         result['VEND'] = result['VEND'].astype(str).str.strip()
         vendedores_df['VENDEDOR'] = vendedores_df['VENDEDOR'].astype(str).str.strip()
         
@@ -329,28 +358,44 @@ if not libro_all.empty and not aux_all.empty:
         aux_all,
         left_on='NRO',
         right_on='NRO_CRUCE',
-        how='inner'
+        how='inner',
+        suffixes=('_LIBRO', '_AUX')  # Sufijos para columnas duplicadas
     )
     
-    # SELECCIONAR SOLO LAS COLUMNAS NECESARIAS
-    columnas_necesarias = ['NRO', 'FECHA_x', 'VALOR_REAL', 'PERIODO', 
-                          'REFERENCIA', 'DESCRIPCION', 'COMPROBA', 'VEND', 
-                          'CANTENTREGA', 'NRO_CRUCE']
-    
-    # Verificar que existan las columnas
-    columnas_disponibles = [col for col in columnas_necesarias if col in df_all.columns]
-    df_all = df_all[columnas_disponibles].copy()
-    
     # Renombrar columnas para consistencia
-    df_all = df_all.rename(columns={
-        'VALOR_REAL': 'VALOR',
-        'FECHA_x': 'FECHA',
-        'CANTENTREGA': 'CANTIDAD'
-    })
+    rename_dict = {}
+    
+    # Manejar FECHA
+    if 'FECHA_LIBRO' in df_all.columns:
+        rename_dict['FECHA_LIBRO'] = 'FECHA'
+    elif 'FECHA_AUX' in df_all.columns:
+        rename_dict['FECHA_AUX'] = 'FECHA'
+    
+    # Valor real
+    if 'VALOR_REAL' in df_all.columns:
+        rename_dict['VALOR_REAL'] = 'VALOR'
+    
+    # Cantidad
+    if 'CANTENTREGA' in df_all.columns:
+        rename_dict['CANTENTREGA'] = 'CANTIDAD'
+    
+    # NOMBRE del auxiliar (el importante)
+    if 'NOMBRE_AUX' in df_all.columns:
+        rename_dict['NOMBRE_AUX'] = 'NOMBRE'
+    
+    df_all = df_all.rename(columns=rename_dict)
+    
+    # Seleccionar columnas necesarias
+    columnas_base = ['NRO', 'FECHA', 'VALOR', 'PERIODO', 'REFERENCIA', 
+                     'DESCRIPCION', 'COMPROBA', 'VEND', 'CANTIDAD', 
+                     'NRO_CRUCE', 'NOMBRE']
+    
+    columnas_finales = [col for col in columnas_base if col in df_all.columns]
+    df_all = df_all[columnas_finales].copy()
     
     # Extraer año del PERIODO
     if 'PERIODO' in df_all.columns:
-        df_all['AÑO'] = df_all['PERIODO'].astype(int)
+        df_all['AÑO'] = pd.to_numeric(df_all['PERIODO'], errors='coerce').fillna(0).astype(int)
     
     # Si existe FECHA, extraer mes
     if 'FECHA' in df_all.columns:
@@ -363,12 +408,18 @@ if not libro_all.empty and not aux_all.empty:
         df_all['MES_ABBR'] = 'ENE'
         df_all['AÑO_MES'] = df_all['AÑO'].astype(str) + '-01'
     
-    # st.success(f"✅ Cruce exitoso: {len(df_all):,} registros con datos completos")
-    # st.write(f"**Columnas finales:** {list(df_all.columns)}")
+    st.success(f"✅ Cruce exitoso: {len(df_all):,} registros con datos completos")
+    st.write(f"**Columnas finales:** {list(df_all.columns)}")
 
 # Unir con catálogos
 if not df_all.empty:
     df_all = merge_catalogs(df_all, comercios_cat, vendedores_cat)
+    
+    # **LIMPIAR COLUMNAS DUPLICADAS**
+    df_all = df_all.loc[:, ~df_all.columns.duplicated(keep='first')]
+    
+    # Verificar columnas finales
+    st.write(f"**Columnas después de limpieza:** {list(df_all.columns)}")
 
 # ==========================
 # Filtros
@@ -422,17 +473,30 @@ st.header("📊 Indicadores Principales")
 if not df_filtered.empty:
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    ventas_total = df_filtered['VALOR'].sum()
-    unidades_total = df_filtered['CANTIDAD'].sum()
-    ticket_promedio = ventas_total / unidades_total if unidades_total > 0 else 0
-    referencias_activas = df_filtered['REFERENCIA'].nunique()
-    transacciones = len(df_filtered)
-    
-    col1.metric("💰 Ventas Totales", f"${ventas_total:,.0f}")
-    col2.metric("📦 Unidades", f"{unidades_total:,.0f}")
-    col3.metric("🧾 Ticket Promedio", f"${ticket_promedio:,.0f}")
-    col4.metric("🏷️ Referencias Activas", f"{referencias_activas:,}")
-    col5.metric("📝 Transacciones", f"{transacciones:,}")
+    # Verificar y manejar Series vs valor escalar
+    try:
+        if isinstance(df_filtered['VALOR'], pd.DataFrame):
+            ventas_total = df_filtered['VALOR'].iloc[:, 0].sum()
+        else:
+            ventas_total = df_filtered['VALOR'].sum()
+        
+        if isinstance(df_filtered['CANTIDAD'], pd.DataFrame):
+            unidades_total = df_filtered['CANTIDAD'].iloc[:, 0].sum()
+        else:
+            unidades_total = df_filtered['CANTIDAD'].sum()
+        
+        ticket_promedio = ventas_total / unidades_total if unidades_total > 0 else 0
+        referencias_activas = df_filtered['REFERENCIA'].nunique() if isinstance(df_filtered['REFERENCIA'], pd.Series) else df_filtered['REFERENCIA'].iloc[:, 0].nunique()
+        transacciones = len(df_filtered)
+        
+        col1.metric("💰 Ventas Totales", f"${ventas_total:,.0f}")
+        col2.metric("📦 Unidades", f"{unidades_total:,.0f}")
+        col3.metric("🧾 Ticket Promedio", f"${ticket_promedio:,.0f}")
+        col4.metric("🏷️ Referencias Activas", f"{referencias_activas:,}")
+        col5.metric("📝 Transacciones", f"{transacciones:,}")
+    except Exception as e:
+        st.error(f"Error calculando KPIs: {e}")
+        st.write("Columnas disponibles:", df_filtered.columns.tolist())
     
     # Segunda fila de KPIs
     col6, col7, col8, col9 = st.columns(4)
