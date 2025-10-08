@@ -7,6 +7,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 
+# Logo en la esquina superior
+top_col1, top_col2 = st.columns([0.7,0.3])
+with top_col2:
+    st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
+
 # ==========================
 # Config general
 # ==========================
@@ -17,13 +22,21 @@ st.caption("Fuente: Auxiliar por número - Análisis transaccional completo")
 
 # ==========================
 # Parámetros de carga
-# ==========================
+# ==========================<
+
+# Archivos de catálogos
+st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Cargar Datos")
 
 # Archivos principales de ventas
 st.sidebar.subheader("📁 Archivos de Ventas")
-file_2024 = st.sidebar.file_uploader("Ventas 2024 (Excel)", type=["xlsx", "xls"], key="2024")
-file_2025 = st.sidebar.file_uploader("Ventas 2025 (Excel)", type=["xlsx", "xls"], key="2025")
+st.sidebar.caption("Libro de ventas (base principal)")
+libro_2024 = st.sidebar.file_uploader("Libro Ventas 2024", type=["xlsx", "xls"], key="libro_2024")
+libro_2025 = st.sidebar.file_uploader("Libro Ventas 2025", type=["xlsx", "xls"], key="libro_2025")
+
+st.sidebar.caption("Auxiliar por número (datos complementarios)")
+aux_2024 = st.sidebar.file_uploader("Auxiliar 2024", type=["xlsx", "xls"], key="aux_2024")
+aux_2025 = st.sidebar.file_uploader("Auxiliar 2025", type=["xlsx", "xls"], key="aux_2025")
 
 # Archivos de catálogos
 st.sidebar.markdown("---")
@@ -45,105 +58,108 @@ MONTH_MAP = {
 }
 
 @st.cache_data(show_spinner=False)
-def load_transactional_data(file_obj, year_label):
-    """Carga datos transaccionales de ventas"""
+def load_libro_ventas(file_obj, year_label):
+    """Carga Libro de ventas - BASE PRINCIPAL"""
     if file_obj is None:
         return pd.DataFrame()
     
     try:
-        # Leer con header=None primero para inspeccionar
-        df_raw = pd.read_excel(file_obj, header=None)
-        
-        # Buscar la fila de encabezados (que contenga palabras clave)
-        header_row = None
-        for i in range(min(10, len(df_raw))):  # Buscar en las primeras 10 filas
-            row_values = [str(cell).strip().upper() for cell in df_raw.iloc[i] if pd.notna(cell)]
-            row_str = ' '.join(row_values)
-            
-            # Buscar palabras clave
-            if any(keyword in row_str for keyword in ['REFERENCIA', 'FECHA', 'COMPROBA', 'VALOR', 'CANTIDAD']):
-                header_row = i
-                break
-        
-        # Leer desde la fila de encabezados detectada
-        if header_row is not None:
-            df = pd.read_excel(file_obj, skiprows=header_row)
-        else:
-            df = pd.read_excel(file_obj)
-        
-        # Manejar columnas duplicadas agregando sufijos
-        cols = pd.Series(df.columns)
-        for dup in cols[cols.duplicated()].unique():
-            dup_indices = [i for i, x in enumerate(cols) if x == dup]
-            for i, idx in enumerate(dup_indices[1:], start=1):
-                cols.iloc[idx] = f"{dup}_{i}"
-        df.columns = cols
+        # Leer directamente con encabezados en la primera fila
+        df = pd.read_excel(file_obj, header=0)
         
         # Normalizar nombres de columnas
-        df.columns = [str(col).strip().upper() for col in df.columns]
+        df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
         
-        # Mapeo de columnas esperadas
+        # Mapear nombres de columnas a los esperados
         column_mapping = {}
         for col in df.columns:
-            col_clean = col.upper().strip()
-            if 'REFERENCIA' in col_clean:
-                column_mapping[col] = 'REFERENCIA'
-            elif 'DESCRIPCION' in col_clean or 'DESCRIP' in col_clean:
-                column_mapping[col] = 'DESCRIPCION'
-            elif 'COMPROBA' in col_clean:
-                column_mapping[col] = 'COMPROBA'
-            elif 'FECHA' in col_clean:
+            if 'GRAVADAS' in col and 'IVA' in col:
+                column_mapping[col] = 'VALOR_REAL'
+            elif col == 'NRO':
+                column_mapping[col] = 'NRO'
+            elif 'FECHA' in col:
                 column_mapping[col] = 'FECHA'
-            elif 'VEND' in col_clean and 'VENDEDOR' not in col_clean:
-                column_mapping[col] = 'VEND'
-            elif 'VAL.ENTREGA' in col_clean or 'VAL ENTREGA' in col_clean or 'VALOR' in col_clean:
-                if 'VALOR' not in column_mapping.values():
-                    column_mapping[col] = 'VALOR'
-            elif 'CANT.ENTREGA' in col_clean or 'CANT ENTREGA' in col_clean or 'CANTIDAD' in col_clean:
-                if 'CANTIDAD' not in column_mapping.values():
-                    column_mapping[col] = 'CANTIDAD'
         
         df = df.rename(columns=column_mapping)
         
         # Verificar columnas requeridas
-        required_cols = ['REFERENCIA', 'FECHA', 'VALOR', 'CANTIDAD']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            st.error(f"Faltan columnas requeridas en {year_label}: {missing_cols}")
-            st.info(f"Columnas disponibles: {list(df.columns)}")
+        if 'NRO' not in df.columns or 'VALOR_REAL' not in df.columns:
+            st.error(f"Libro {year_label}: Faltan columnas NRO o GRAVADAS_IVA")
+            st.info(f"Columnas encontradas: {list(df.columns)}")
             return pd.DataFrame()
         
-        # Convertir tipos de datos
-        df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
-        df['VALOR'] = pd.to_numeric(df['VALOR'], errors='coerce').fillna(0)
-        df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(0)
+        # Normalizar NRO
+        df['NRO'] = df['NRO'].astype(str).str.replace('.0', '', regex=False).str.strip()
         
-        # Filtrar filas válidas
-        df = df[df['FECHA'].notna() & (df['REFERENCIA'].notna())]
+        # Normalizar VALOR_REAL
+        df['VALOR_REAL'] = pd.to_numeric(df['VALOR_REAL'], errors='coerce').fillna(0)
         
-        # Extraer mes y año
-        df['AÑO'] = df['FECHA'].dt.year
-        df['MES_NUM'] = df['FECHA'].dt.month
-        df['MES_ABBR'] = df['MES_NUM'].map(MONTH_MAP)
-        df['AÑO_MES'] = df['FECHA'].dt.to_period('M').astype(str)
+        # Filtrar registros válidos
+        df = df[df['VALOR_REAL'] > 0]
+        df = df[df['NRO'].str.len() > 0]
+        df = df[df['NRO'] != '0']
         
-        # Agregar etiqueta de año
         df['PERIODO'] = year_label
         
-        # Limpiar campos opcionales
-        for col in ['COMPROBA', 'VEND', 'DESCRIPCION']:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.strip()
-            else:
-                df[col] = 'N/D'
-        
-        st.success(f"✅ Cargados {len(df):,} registros de {year_label}")
         return df
         
     except Exception as e:
-        st.error(f"Error al cargar {year_label}: {str(e)}")
+        st.error(f"Error en Libro {year_label}: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return pd.DataFrame()
 
+@st.cache_data(show_spinner=False)
+def load_auxiliar(file_obj, year_label):
+    """Carga Auxiliar - DATOS COMPLEMENTARIOS"""
+    if file_obj is None:
+        return pd.DataFrame()
+    
+    try:
+        # Leer directamente con encabezados en la primera fila
+        df = pd.read_excel(file_obj, header=0)
+        
+        # Normalizar nombres de columnas
+        df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
+        
+        # Verificar que existan las columnas necesarias
+        if 'NRO_CRUCE' not in df.columns or 'REFERENCIA' not in df.columns:
+            st.error(f"Auxiliar {year_label}: Faltan columnas NRO_CRUCE o REFERENCIA")
+            st.info(f"Columnas encontradas: {list(df.columns)}")
+            return pd.DataFrame()
+        
+        # Normalizar NRO_CRUCE de forma simple
+        df['NRO_CRUCE'] = df['NRO_CRUCE'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        
+        # Normalizar REFERENCIA
+        df['REFERENCIA'] = df['REFERENCIA'].fillna('').astype(str).str.strip().str.upper()
+        
+        # Filtrar EKMFLETE
+        df = df[~df['REFERENCIA'].str.contains('EKMFLETE|EKMSS', na=False, case=False)]
+        
+        # Normalizar campos opcionales
+        for col in ['COMPROBA', 'VEND', 'DESCRIPCION']:
+            if col in df.columns:
+                df[col] = df[col].fillna('').astype(str).str.strip()
+        
+        if 'CANTIDAD' in df.columns:
+            df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(0.0)
+        else:
+            df['CANTIDAD'] = 0.0
+        
+        # Limpiar registros vacíos
+        df = df[df['REFERENCIA'].str.len() > 0]
+        df = df[df['NRO_CRUCE'].str.len() > 0]
+        df = df[df['NRO_CRUCE'] != '0']
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Error en Auxiliar {year_label}: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return pd.DataFrame()
+    
 @st.cache_data(show_spinner=False)
 def load_catalog(file_obj, key_col, value_col):
     """Carga catálogos de comercios o vendedores"""
@@ -173,7 +189,7 @@ def load_catalog(file_obj, key_col, value_col):
             result = df[[key_found, value_found]].copy()
             result.columns = [key_col.upper(), value_col.upper()]
             result[key_col.upper()] = result[key_col.upper()].astype(str).str.strip()
-            st.success(f"✅ Catálogo cargado: {len(result)} registros")
+            # st.success(f"✅ Catálogo cargado: {len(result)} registros")
             return result
         else:
             st.warning(f"No se encontraron columnas {key_col} y {value_col} en el catálogo")
@@ -241,26 +257,114 @@ def pareto_analysis(df_grouped, value_col='VALOR', label_col='REFERENCIA', top_n
 # ==========================
 # Carga de datos
 # ==========================
-df_2024 = load_transactional_data(file_2024, "2024")
-df_2025 = load_transactional_data(file_2025, "2025")
+# Cargar Libro de ventas
+libro_df_2024 = load_libro_ventas(libro_2024, "2024")
+libro_df_2025 = load_libro_ventas(libro_2025, "2025")
+
+# Cargar Auxiliar
+aux_df_2024 = load_auxiliar(aux_2024, "2024")
+aux_df_2025 = load_auxiliar(aux_2025, "2025")
 
 # Cargar catálogos
 comercios_cat = load_catalog(comercios_file, 'Z', 'NOMBRE')
 vendedores_cat = load_catalog(vendedores_file, 'VENDEDOR', 'NOMBRE')
 
-# Combinar ambos años
-if not df_2024.empty and not df_2025.empty:
-    df_all = pd.concat([df_2024, df_2025], ignore_index=True)
-    st.success(f"✅ Total combinado: {len(df_all):,} registros")
-elif not df_2024.empty:
-    df_all = df_2024.copy()
-    st.info("Solo datos de 2024 disponibles")
-elif not df_2025.empty:
-    df_all = df_2025.copy()
-    st.info("Solo datos de 2025 disponibles")
+# Combinar años del Libro
+if not libro_df_2024.empty and not libro_df_2025.empty:
+    libro_all = pd.concat([libro_df_2024, libro_df_2025], ignore_index=True)
+elif not libro_df_2024.empty:
+    libro_all = libro_df_2024.copy()
+    st.info("Solo datos de Libro 2024 disponibles")
+elif not libro_df_2025.empty:
+    libro_all = libro_df_2025.copy()
+    st.info("Solo datos de Libro 2025 disponibles")
 else:
-    df_all = pd.DataFrame()
-    st.warning("⚠️ Por favor, carga al menos un archivo de ventas para comenzar")
+    libro_all = pd.DataFrame()
+
+# Combinar años del Auxiliar
+if not aux_df_2024.empty and not aux_df_2025.empty:
+    aux_all = pd.concat([aux_df_2024, aux_df_2025], ignore_index=True)
+    # st.success(f"✅ Total combinado Auxiliar: {len(aux_all):,} registros")
+elif not aux_df_2024.empty:
+    aux_all = aux_df_2024.copy()
+    st.info("Solo datos de Auxiliar 2024 disponibles")
+elif not aux_df_2025.empty:
+    aux_all = aux_df_2025.copy()
+    st.info("Solo datos de Auxiliar 2025 disponibles")
+else:
+    aux_all = pd.DataFrame()
+
+# ==========================
+# DIAGNÓSTICO DE CRUCE
+# ==========================
+if not libro_all.empty and not aux_all.empty:
+
+    aux_all = aux_all.drop_duplicates(subset=['NRO_CRUCE'], keep='first')
+    
+    # col_diag1, col_diag2 = st.columns(2)
+    
+    # with col_diag1:
+    #     st.subheader("📘 Libro de Ventas")
+    #     st.write(f"**Total registros:** {len(libro_all):,}")
+    #     st.write(f"**Columnas:** {', '.join(libro_all.columns.tolist())}")
+    #     st.write("**Muestra de NRO (primeros 10):**")
+    #     nro_sample = libro_all['NRO'].head(10).tolist()
+    #     for i, nro in enumerate(nro_sample, 1):
+    #         st.write(f"{i}. `{nro}` (tipo: {type(nro).__name__}, longitud: {len(str(nro))})")
+    
+    # with col_diag2:
+    #     st.subheader("📗 Auxiliar")
+    #     st.write(f"**Total registros:** {len(aux_all):,}")
+    #     st.write(f"**Columnas:** {', '.join(aux_all.columns.tolist())}")
+    #     st.write("**Muestra de NRO_CRUCE (primeros 10):**")
+    #     nro_cruce_sample = aux_all['NRO_CRUCE'].head(10).tolist()
+    #     for i, nro in enumerate(nro_cruce_sample, 1):
+    #         st.write(f"{i}. `{nro}` (tipo: {type(nro).__name__}, longitud: {len(str(nro))})")
+
+df_all = pd.DataFrame()
+
+# CRUCE: Libro (NRO) con Auxiliar (NRO_CRUCE)
+if not libro_all.empty and not aux_all.empty:
+    df_all = libro_all.merge(
+        aux_all,
+        left_on='NRO',
+        right_on='NRO_CRUCE',
+        how='inner'
+    )
+    
+    # SELECCIONAR SOLO LAS COLUMNAS NECESARIAS
+    columnas_necesarias = ['NRO', 'FECHA_x', 'VALOR_REAL', 'PERIODO', 
+                          'REFERENCIA', 'DESCRIPCION', 'COMPROBA', 'VEND', 
+                          'CANTENTREGA', 'NRO_CRUCE']
+    
+    # Verificar que existan las columnas
+    columnas_disponibles = [col for col in columnas_necesarias if col in df_all.columns]
+    df_all = df_all[columnas_disponibles].copy()
+    
+    # Renombrar columnas para consistencia
+    df_all = df_all.rename(columns={
+        'VALOR_REAL': 'VALOR',
+        'FECHA_x': 'FECHA',
+        'CANTENTREGA': 'CANTIDAD'
+    })
+    
+    # Extraer año del PERIODO
+    if 'PERIODO' in df_all.columns:
+        df_all['AÑO'] = df_all['PERIODO'].astype(int)
+    
+    # Si existe FECHA, extraer mes
+    if 'FECHA' in df_all.columns:
+        df_all['FECHA'] = pd.to_datetime(df_all['FECHA'], errors='coerce')
+        df_all['MES_NUM'] = df_all['FECHA'].dt.month.fillna(1).astype(int)
+        df_all['MES_ABBR'] = df_all['MES_NUM'].map(MONTH_MAP)
+        df_all['AÑO_MES'] = df_all['FECHA'].dt.to_period('M').astype(str)
+    else:
+        df_all['MES_NUM'] = 1
+        df_all['MES_ABBR'] = 'ENE'
+        df_all['AÑO_MES'] = df_all['AÑO'].astype(str) + '-01'
+    
+    # st.success(f"✅ Cruce exitoso: {len(df_all):,} registros con datos completos")
+    # st.write(f"**Columnas finales:** {list(df_all.columns)}")
 
 # Unir con catálogos
 if not df_all.empty:
@@ -626,8 +730,9 @@ if not df_filtered.empty:
         # Métricas de concentración
         total_refs = len(ref_analysis)
         
-        col_pareto1, col_pareto2, col_pareto3, col_pareto4 = st.columns(4)
-        
+        # col_pareto1, col_pareto2, col_pareto3, col_pareto4 = st.columns(4)
+        col_pareto1, col_pareto2, col_pareto3 = st.columns(3)
+
         col_pareto1.metric(
             "🎯 Referencias para 80% ventas",
             f"{items_80} de {total_refs}",
@@ -644,12 +749,12 @@ if not df_filtered.empty:
             f"{100*items_95/total_refs:.1f}%"
         )
         
-        # Índice de Herfindahl-Hirschman (HHI)
-        ventas_total_hhi = ref_analysis['VALOR'].sum()
-        if ventas_total_hhi > 0:
-            shares = (ref_analysis['VALOR'] / ventas_total_hhi) ** 2
-            hhi = 10000 * shares.sum()
-            col_pareto4.metric("📊 Concentración (HHI)", f"{hhi:,.0f}")
+        # # Índice de Herfindahl-Hirschman (HHI)
+        # ventas_total_hhi = ref_analysis['VALOR'].sum()
+        # if ventas_total_hhi > 0:
+        #     shares = (ref_analysis['VALOR'] / ventas_total_hhi) ** 2
+        #     hhi = 10000 * shares.sum()
+        #     # col_pareto4.metric("📊 Concentración (HHI)", f"{hhi:,.0f}")
         
         # Interpretación del análisis de Pareto
         st.info(f"""
