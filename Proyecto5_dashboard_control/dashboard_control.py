@@ -1,369 +1,273 @@
 import streamlit as st
+# import gspread
+# from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-import gdown
-import matplotlib.pyplot as plt
-import seaborn as sns
+from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import numpy as np
-
-# ==============================
-# CONFIGURACIÓN DEL DASHBOARD
-# ==============================
-st.set_page_config(
-    page_title="Dashboard Ekonomodo", 
-    layout="wide",
-    page_icon="📊"
-)
 
 # Logo en la esquina superior
 top_col1, top_col2 = st.columns([0.7,0.3])
 with top_col2:
     st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
 
-st.title("📊 Dashboard Control Ekonomodo")
-st.markdown("---")
+# Configuración de la página
+st.set_page_config(
+    page_title="Control Ekonomodo",
+    page_icon="📦",
+    layout="wide"
+)
 
-# ==============================
-# FUNCIÓN PARA CARGAR DATOS DESDE WEB PUBLICADA
-# ==============================
 @st.cache_data(ttl=300)  # Cache por 5 minutos
-def cargar_datos_web():
-    """Carga datos desde Google Sheets publicado en web"""
-    
-    # CONFIGURACIÓN - Reemplaza con tus URLs
-    # Opción 1: URL directa de descarga (más rápida)
-    SHEETS_URL = "TU_URL_PUBLICAR_WEB_AQUI"  # ⚠️ Reemplaza con tu URL
-    
-    # Opción 2: URLs específicas por hoja (si tienes problemas con la URL principal)
-    URL_ARCHIVO = "URL_HOJA_ARCHIVO"  # ⚠️ Opcional
-    URL_ESTATUS = "URL_HOJA_ESTATUS"  # ⚠️ Opcional
-    
+def cargar_datos(sheet_url):
+    """Carga los datos desde Google Sheets"""
     try:
-        with st.spinner('Cargando datos desde Google Sheets...'):
-            
-            # Método 1: Cargar archivo completo y leer hojas
-            if SHEETS_URL != "TU_URL_PUBLICAR_WEB_AQUI":
-                response = requests.get(SHEETS_URL)
-                response.raise_for_status()
-                
-                # Leer Excel desde bytes
-                excel_data = io.BytesIO(response.content)
-                df_archivo = pd.read_excel(excel_data, sheet_name="ARCHIVO")
-                df_estatus = pd.read_excel(excel_data, sheet_name="ESTATUS")
-                
-                st.success("✅ Datos cargados desde Google Sheets (Web publicada)")
-                return df_archivo, df_estatus
-            
-            # Método 2: URLs separadas por hoja (como CSV)
-            elif URL_ARCHIVO != "URL_HOJA_ARCHIVO" and URL_ESTATUS != "URL_HOJA_ESTATUS":
-                df_archivo = pd.read_csv(URL_ARCHIVO)
-                df_estatus = pd.read_csv(URL_ESTATUS)
-                
-                st.success("✅ Datos cargados desde hojas CSV separadas")
-                return df_archivo, df_estatus
-            
-            else:
-                # Mostrar instrucciones si no hay URL configurada
-                return None, None
-                
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error de conexión: {str(e)}")
-        return None, None
+        # Convertir URL a formato CSV export
+        sheet_id = sheet_url.split('/d/')[1].split('/')[0]
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=1456329364"
+        
+        df = pd.read_csv(csv_url, header=1)
+        
+        # Normalizar nombres de columnas
+        df = df.rename(columns={
+            'COMERCIAL ORDEN': 'ORDEN',
+            'PRODUCCION ESTATUS': 'ESTATUS'
+        })
+        
+        # Convertir fechas
+        df['FECHA DE VENTA'] = pd.to_datetime(df['FECHA DE VENTA'], format='%d/%m/%Y', errors='coerce')
+        df['FECHA DE VENCIMIENTO'] = pd.to_datetime(df['FECHA DE VENCIMIENTO'], format='%d/%m/%Y', errors='coerce')
+
+        # Limpiar y normalizar datos
+        df['ORDEN'] = df['ORDEN'].astype(str).str.strip().str.upper()
+        df['ESTATUS'] = df['ESTATUS'].astype(str).str.strip().str.upper()
+        df['ESTATUS LOGISTICA'] = df['ESTATUS LOGISTICA'].astype(str).str.strip().str.upper()
+        df['CUENTA'] = df['CUENTA'].astype(str).str.strip()
+        df['EKM'] = df['EKM'].astype(str).str.strip()
+
+        # DIAGNÓSTICO - Temporal para ver qué hay en los datos
+        st.sidebar.write("🔍 Diagnóstico de datos:")
+        st.sidebar.write(f"Total filas cargadas: {len(df)}")
+        st.sidebar.write(f"Conteo por ESTATUS:")
+        st.sidebar.write(df['ESTATUS'].value_counts())
+
+        return df
     except Exception as e:
-        st.error(f"Error al procesar los datos: {str(e)}")
-        return None, None
+        st.error(f"Error al cargar datos: {str(e)}")
+        return None
 
-# ==============================
-# FUNCIÓN PARA LIMPIAR DATOS
-# ==============================
-def limpiar_datos(df_archivo, df_estatus):
-    # Limpiar fechas en ARCHIVO
-    df_archivo["FECHA DE VENCIMIENTO"] = pd.to_datetime(df_archivo["FECHA DE VENCIMIENTO"], errors="coerce")
-    if "FECHA ESTIMADA DE ENTREGA DE PRODUCCION" in df_archivo.columns:
-        df_archivo["FECHA ESTIMADA DE ENTREGA DE PRODUCCION"] = pd.to_datetime(
-            df_archivo["FECHA ESTIMADA DE ENTREGA DE PRODUCCION"], errors="coerce"
-        )
-    
-    # Limpiar fechas en ESTATUS
-    if "marca temporal" in df_estatus.columns:
-        df_estatus["marca temporal"] = pd.to_datetime(df_estatus["marca temporal"], errors="coerce")
-    
-    # Limpiar valores nulos y normalizar texto
-    df_archivo = df_archivo.fillna("")
-    df_estatus = df_estatus.fillna("")
-    
-    return df_archivo, df_estatus
+# Título principal
+st.title("Control de Producción y Logística - Ekonomodo")
 
-# ==============================
-# CARGAR Y LIMPIAR DATOS
-# ==============================
-df_archivo, df_estatus = cargar_datos()
+st.sidebar.header("⚙️ Configuración")
+# URL fija del Google Sheet de Control
+sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCxpHYQaS8oesyTuUEs/edit#gid=1456329364"
 
-if df_archivo is not None and df_estatus is not None:
-    df_archivo, df_estatus = limpiar_datos(df_archivo, df_estatus)
-    
-    # ==============================
-    # SIDEBAR - FILTROS
-    # ==============================
-    st.sidebar.header("🔍 Filtros")
-    
-    # Botón para refrescar datos
-    if st.sidebar.button("🔄 Refrescar Datos"):
-        st.cache_data.clear()
-        st.rerun()
-    
-    # Filtros principales
-    cuentas_disponibles = df_archivo["CUENTA"].unique()
-    cuenta = st.sidebar.multiselect("Filtrar por Cuenta:", cuentas_disponibles)
-    
-    estatus_disponibles = df_archivo["ESTATUS"].unique()
-    estatus = st.sidebar.multiselect("Filtrar por Estatus:", estatus_disponibles)
-    
-    if "ESTATUS LOGISTICA" in df_archivo.columns:
-        estatus_log_disponibles = df_archivo["ESTATUS LOGISTICA"].unique()
-        estatus_log = st.sidebar.multiselect("Filtrar por Estatus Logística:", estatus_log_disponibles)
-    else:
-        estatus_log = []
-    
-    # Filtro por rango de fechas
-    st.sidebar.subheader("📅 Filtros de Fecha")
-    fecha_inicio = st.sidebar.date_input("Fecha inicio", value=datetime.now() - timedelta(days=30))
-    fecha_fin = st.sidebar.date_input("Fecha fin", value=datetime.now())
-    
-    # Aplicar filtros
-    df_filtrado = df_archivo.copy()
-    
-    if cuenta:
-        df_filtrado = df_filtrado[df_filtrado["CUENTA"].isin(cuenta)]
-    if estatus:
-        df_filtrado = df_filtrado[df_filtrado["ESTATUS"].isin(estatus)]
-    if estatus_log and "ESTATUS LOGISTICA" in df_filtrado.columns:
-        df_filtrado = df_filtrado[df_filtrado["ESTATUS LOGISTICA"].isin(estatus_log)]
-    
-    # Filtrar por fechas
-    if "FECHA DE VENCIMIENTO" in df_filtrado.columns:
-        df_filtrado = df_filtrado[
-            (df_filtrado["FECHA DE VENCIMIENTO"].dt.date >= fecha_inicio) &
-            (df_filtrado["FECHA DE VENCIMIENTO"].dt.date <= fecha_fin)
-        ]
-    
-    # ==============================
-    # MÉTRICAS PRINCIPALES
-    # ==============================
-    st.header("📊 Resumen Ejecutivo")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    total_ordenes = len(df_filtrado)
-    produccion = (df_filtrado["ESTATUS"] == "PRODUCCION").sum()
-    entrega = (df_filtrado["ESTATUS"] == "ENTREGA").sum()
-    cancelados = (df_filtrado["ESTATUS"] == "CANCELADO").sum()
-    
-    if "ESTATUS LOGISTICA" in df_filtrado.columns:
-        recibidos = (df_filtrado["ESTATUS LOGISTICA"] == "RECIBIDO").sum()
-    else:
-        recibidos = 0
-    
-    col1.metric("📦 Total Órdenes", total_ordenes)
-    col2.metric("🏭 Producción", produccion)
-    col3.metric("🚚 Entrega", entrega)
-    col4.metric("❌ Cancelados", cancelados)
-    col5.metric("✅ Recibidos", recibidos)
-    
-    # ==============================
-    # ANÁLISIS DE ESTATUS
-    # ==============================
-    st.header("📈 Análisis de Estatus")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Distribución de Estatus General")
-        estatus_counts = df_filtrado["ESTATUS"].value_counts()
+if sheet_url:
+    try:
+        # client = conectar_google_sheets()
+        # df = cargar_datos(client, sheet_url)
+        df = cargar_datos(sheet_url)
         
-        fig_estatus = px.pie(
-            values=estatus_counts.values,
-            names=estatus_counts.index,
-            title="Distribución de Estatus",
-            hole=0.4
-        )
-        fig_estatus.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig_estatus, use_container_width=True)
-    
-    with col2:
-        if "ESTATUS LOGISTICA" in df_filtrado.columns:
-            st.subheader("Distribución de Estatus Logística")
-            log_counts = df_filtrado["ESTATUS LOGISTICA"].value_counts()
+        if df is not None and not df.empty:
+            # Filtrar por último mes
+            fecha_actual = datetime.now()
+            fecha_mes_atras = fecha_actual - timedelta(days=30)
+            df_ultimo_mes = df[df['FECHA DE VENTA'] >= fecha_mes_atras]
             
-            fig_log = px.bar(
-                x=log_counts.index,
-                y=log_counts.values,
-                title="Estatus Logística",
-                labels={'x': 'Estatus', 'y': 'Cantidad'}
-            )
-            st.plotly_chart(fig_log, use_container_width=True)
-    
-    # ==============================
-    # ANÁLISIS DE CUMPLIMIENTO
-    # ==============================
-    st.header("⏱️ Análisis de Cumplimiento de Entregas")
-    
-    # Merge de las dos hojas por ORDEN
-    if "ORDEN" in df_archivo.columns and "ORDEN" in df_estatus.columns:
-        df_merged = pd.merge(df_filtrado, df_estatus, on="ORDEN", how="left", suffixes=("", "_estatus"))
-        
-        # Filtrar solo las órdenes con marca temporal (entregadas)
-        df_entregadas = df_merged.dropna(subset=["marca temporal"])
-        
-        if not df_entregadas.empty:
-            # Calcular cumplimiento
-            df_entregadas["DIAS_DIFERENCIA"] = (
-                df_entregadas["marca temporal"] - df_entregadas["FECHA DE VENCIMIENTO"]
-            ).dt.days
-            
-            df_entregadas["CUMPLIMIENTO"] = df_entregadas["DIAS_DIFERENCIA"] <= 0
-            df_entregadas["CATEGORIA_ENTREGA"] = df_entregadas["DIAS_DIFERENCIA"].apply(
-                lambda x: "A tiempo" if x <= 0 else f"Retraso ({x} días)" if x <= 7 else f"Retraso crítico ({x} días)"
-            )
+            # ==== ALERTAS PRINCIPALES ====
+            st.header("🚨 Alertas Importantes")
             
             col1, col2, col3 = st.columns(3)
             
-            entregadas_total = len(df_entregadas)
-            a_tiempo = df_entregadas["CUMPLIMIENTO"].sum()
-            retrasadas = entregadas_total - a_tiempo
+            # Alerta: Próximos a vencer en 2 días
+            fecha_limite = fecha_actual + timedelta(days=2)
+            # Alerta: Próximos a vencer en 2 días
+            fecha_limite = fecha_actual + timedelta(days=2)
+            proximos_vencer = df_ultimo_mes[
+                (df_ultimo_mes['FECHA DE VENCIMIENTO'] <= fecha_limite) & 
+                (df_ultimo_mes['FECHA DE VENCIMIENTO'] >= fecha_actual) &
+                (df_ultimo_mes['ESTATUS'] != 'ENTREGADO')
+            ]
             
-            col1.metric("📦 Órdenes Entregadas", entregadas_total)
-            col2.metric("✅ A Tiempo", a_tiempo, f"{(a_tiempo/entregadas_total*100):.1f}%" if entregadas_total > 0 else "0%")
-            col3.metric("⏰ Retrasadas", retrasadas, f"{(retrasadas/entregadas_total*100):.1f}%" if entregadas_total > 0 else "0%")
+            with col1:
+                if len(proximos_vencer) > 0:
+                    st.error(f"⚠️ {len(proximos_vencer)} órdenes vencen en 2 días")
+                    with st.expander("Ver detalles"):
+                        st.dataframe(
+                            proximos_vencer[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                                           'FECHA DE VENCIMIENTO', 'ESTATUS']],
+                            hide_index=True
+                        )
+                else:
+                    st.success("✅ No hay órdenes próximas a vencer")
             
-            # Gráfico de cumplimiento
+            # Alerta: Devoluciones
+            devoluciones = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'DEVOLUCION']
+            
+            with col2:
+                if len(devoluciones) > 0:
+                    st.error(f"🔄 {len(devoluciones)} devoluciones pendientes")
+                    with st.expander("Ver detalles"):
+                        st.dataframe(
+                            devoluciones[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'EKM']],
+                            hide_index=True
+                        )
+                else:
+                    st.success("✅ No hay devoluciones")
+            
+            # Alerta: Pendientes de recibir en logística
+            en_produccion = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA']
+            no_recibidos = en_produccion[en_produccion['ESTATUS LOGISTICA'] != 'RECIBIDO']
+            
+            with col3:
+                if len(no_recibidos) > 0:
+                    st.warning(f"📋 {len(no_recibidos)} órdenes pendientes de recibir")
+                    with st.expander("Ver detalles"):
+                        st.dataframe(
+                            no_recibidos[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'CANTIDAD']],
+                            hide_index=True
+                        )
+                else:
+                    st.success("✅ Todo recibido")
+
+            # Nueva fila de alertas
+            col4, col5, col6 = st.columns(3)
+
+            # Alerta: Entregados pero no recibidos en logística
+            entregados_no_recibidos = df_ultimo_mes[
+                (df_ultimo_mes['ESTATUS'] == 'ENTREGADO') & 
+                (df_ultimo_mes['ESTATUS LOGISTICA'].isna() | (df_ultimo_mes['ESTATUS LOGISTICA'] == '') | (df_ultimo_mes['ESTATUS LOGISTICA'] == 'NAN'))
+            ]
+
+            with col4:
+                if len(entregados_no_recibidos) > 0:
+                    st.warning(f"⚠️ {len(entregados_no_recibidos)} entregados sin recibir en logística")
+                    with st.expander("Ver detalles"):
+                        st.dataframe(
+                            entregados_no_recibidos[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
+                            hide_index=True
+                        )
+                else:
+                    st.success("✅ Todos los entregados recibidos")
+            
+            st.divider()
+            
+            # ==== MÉTRICAS GENERALES ====
+            st.header("📊 Resumen del Último Mes")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Órdenes", len(df_ultimo_mes))
+            
+            with col2:
+                en_produccion_count = len(df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'PRODUCCION'])
+                st.metric("En Producción", en_produccion_count)
+            
+            with col3:
+                en_logistica_count = len(df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA'])
+                st.metric("En Logística", en_logistica_count)
+            
+            with col4:
+                total_productos = df_ultimo_mes['CANTIDAD'].sum()
+                st.metric("Total Productos", int(total_productos))
+            
+            st.divider()
+            
+            # ==== VISUALIZACIONES ====
             col1, col2 = st.columns(2)
             
             with col1:
-                cumplimiento_counts = df_entregadas["CUMPLIMIENTO"].value_counts()
-                fig_cumpl = px.pie(
-                    values=cumplimiento_counts.values,
-                    names=["A tiempo" if x else "Retrasadas" for x in cumplimiento_counts.index],
-                    title="Cumplimiento de Entregas",
-                    color_discrete_map={"A tiempo": "#00CC96", "Retrasadas": "#EF553B"}
+                st.subheader("Estado de Órdenes")
+                estatus_counts = df_ultimo_mes['ESTATUS'].value_counts()
+                fig = px.pie(
+                    values=estatus_counts.values,
+                    names=estatus_counts.index,
+                    title="Distribución por Estatus",
+                    color_discrete_sequence=px.colors.qualitative.Set3
                 )
-                st.plotly_chart(fig_cumpl, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                # Histograma de días de diferencia
-                fig_hist = px.histogram(
-                    df_entregadas,
-                    x="DIAS_DIFERENCIA",
-                    nbins=20,
-                    title="Distribución de Días de Retraso/Adelanto",
-                    labels={'DIAS_DIFERENCIA': 'Días (negativo = adelanto)', 'count': 'Cantidad'}
+                st.subheader("Órdenes por Cuenta")
+                cuenta_counts = df_ultimo_mes['CUENTA'].value_counts().head(10)
+                fig = px.bar(
+                    x=cuenta_counts.index,
+                    y=cuenta_counts.values,
+                    title="Top 10 Cuentas",
+                    labels={'x': 'Cuenta', 'y': 'Cantidad de Órdenes'},
+                    color=cuenta_counts.values,
+                    color_continuous_scale='Blues'
                 )
-                fig_hist.add_vline(x=0, line_dash="dash", line_color="red", annotation_text="Fecha límite")
-                st.plotly_chart(fig_hist, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
             
-            # Análisis por cuenta
-            st.subheader("📊 Cumplimiento por Cuenta")
-            cumplimiento_cuenta = df_entregadas.groupby("CUENTA").agg({
-                "CUMPLIMIENTO": ["count", "sum"],
-                "DIAS_DIFERENCIA": "mean"
-            }).round(2)
+            st.divider()
             
-            cumplimiento_cuenta.columns = ["Total", "A Tiempo", "Promedio Días Diferencia"]
-            cumplimiento_cuenta["% Cumplimiento"] = (
-                cumplimiento_cuenta["A Tiempo"] / cumplimiento_cuenta["Total"] * 100
-            ).round(1)
+            # ==== TABLAS DETALLADAS ====
+            st.header("📋 Detalle de Órdenes")
             
-            st.dataframe(cumplimiento_cuenta, use_container_width=True)
-    
-    # ==============================
-    # ANÁLISIS TEMPORAL
-    # ==============================
-    st.header("📅 Análisis Temporal")
-    
-    if "FECHA DE VENCIMIENTO" in df_filtrado.columns:
-        df_temp = df_filtrado.copy()
-        df_temp["MES_VENCIMIENTO"] = df_temp["FECHA DE VENCIMIENTO"].dt.to_period("M").astype(str)
-        
-        # Órdenes por mes
-        ordenes_mes = df_temp.groupby(["MES_VENCIMIENTO", "ESTATUS"]).size().reset_index(name="CANTIDAD")
-        
-        fig_temporal = px.bar(
-            ordenes_mes,
-            x="MES_VENCIMIENTO",
-            y="CANTIDAD",
-            color="ESTATUS",
-            title="Órdenes por Mes y Estatus",
-            labels={'MES_VENCIMIENTO': 'Mes', 'CANTIDAD': 'Cantidad de Órdenes'}
-        )
-        st.plotly_chart(fig_temporal, use_container_width=True)
-    
-    # ==============================
-    # TABLA DETALLADA
-    # ==============================
-    st.header("📋 Detalle de Órdenes")
-    
-    # Selectores para personalizar la vista
-    col1, col2 = st.columns(2)
-    with col1:
-        mostrar_todas = st.checkbox("Mostrar todas las columnas", value=False)
-    with col2:
-        num_filas = st.selectbox("Número de filas a mostrar", [10, 25, 50, 100, "Todas"], index=1)
-    
-    if mostrar_todas:
-        df_mostrar = df_filtrado
-    else:
-        columnas_principales = ["ORDEN", "CUENTA", "FECHA DE VENCIMIENTO", "ESTATUS", "ESTATUS LOGISTICA", "EKM"]
-        columnas_existentes = [col for col in columnas_principales if col in df_filtrado.columns]
-        df_mostrar = df_filtrado[columnas_existentes]
-    
-    if num_filas == "Todas":
-        st.dataframe(df_mostrar, use_container_width=True)
-    else:
-        st.dataframe(df_mostrar.head(num_filas), use_container_width=True)
-    
-    # ==============================
-    # DESCARGA DE DATOS
-    # ==============================
-    st.header("💾 Exportar Datos")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        csv = df_filtrado.to_csv(index=False)
-        st.download_button(
-            label="📥 Descargar datos filtrados (CSV)",
-            data=csv,
-            file_name=f"ekonomodo_filtrado_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv"
-        )
-    
-    with col2:
-        if "ORDEN" in df_archivo.columns and "ORDEN" in df_estatus.columns:
-            df_completo = pd.merge(df_filtrado, df_estatus, on="ORDEN", how="left", suffixes=("", "_estatus"))
-            csv_completo = df_completo.to_csv(index=False)
-            st.download_button(
-                label="📥 Descargar datos completos (CSV)",
-                data=csv_completo,
-                file_name=f"ekonomodo_completo_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv"
-            )
-    
-    # ==============================
-    # FOOTER
-    # ==============================
-    st.markdown("---")
-    st.markdown(f"**Última actualización:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    st.markdown("**Dashboard Ekonomodo** - Desarrollado con Streamlit")
-
-else:
-    st.error("No se pudieron cargar los datos. Verifica la configuración del archivo.")
-    st.info("""
-    **Pasos para configurar:**
-    1. Sube tu archivo Excel a Google Drive
-    2. Haz clic derecho → Obtener enlace
-    3. Copia el FILE_ID del enlace (la parte entre /d/ y /view)
-    4. Reemplaza 'TU_FILE_ID' en el código con tu ID real
-    5. Asegúrate de que el archivo tenga las hojas 'ARCHIVO' y 'ESTATUS'
-    """)
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "🏭 En Producción", 
+                "📦 En Logística", 
+                "✅ Recibidos",
+                "🔍 Buscar Orden"
+            ])
+            
+            with tab1:
+                produccion = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'PRODUCCION']
+                st.dataframe(
+                    produccion[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                              'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
+                    hide_index=True,
+                    use_container_width=True
+                )
+            
+            with tab2:
+                logistica = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA']
+                st.dataframe(
+                    logistica[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS LOGISTICA']],
+                    hide_index=True,
+                    use_container_width=True
+                )
+            
+            with tab3:
+                recibidos = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'RECIBIDO']
+                st.dataframe(
+                    recibidos[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
+                    hide_index=True,
+                    use_container_width=True
+                )
+            
+            with tab4:
+                buscar = st.text_input("Buscar por número de orden o código EKM")
+                if buscar:
+                    resultado = df_ultimo_mes[
+                        (df_ultimo_mes['ORDEN'].astype(str).str.contains(buscar, case=False, na=False)) |
+                        (df_ultimo_mes['EKM'].astype(str).str.contains(buscar, case=False, na=False))
+                    ]
+                    if len(resultado) > 0:
+                        st.dataframe(
+                            resultado[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'FECHA DE VENCIMIENTO',
+                                     'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS', 
+                                     'ESTATUS LOGISTICA']],
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.warning("No se encontraron resultados")
+            
+            # Botón de actualización
+            st.sidebar.divider()
+            if st.sidebar.button("🔄 Actualizar datos"):
+                st.cache_data.clear()
+                st.rerun()
+            
+            # Información de última actualización
+            st.sidebar.info(f"📅 Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+        st.info("👆 Asegúrate de configurar correctamente las credenciales de Google Cloud")
