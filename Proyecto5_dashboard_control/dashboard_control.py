@@ -75,7 +75,6 @@ def cargar_estatus(sheet_url):
         # Convertir ORDEN a entero primero (elimina .0) y luego a string
         df_estatus['ORDEN'] = df_estatus['ORDEN'].fillna(0).astype(float).astype(int).astype(str)
         
-        # Convertir fecha de entrega (solo fecha, sin hora)
         # Convertir fecha de entrega a datetime (pandas lo detectará automáticamente)
         df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'], errors='coerce')
         
@@ -95,13 +94,6 @@ if sheet_url:
     try:
         df = cargar_datos(sheet_url)
         df_estatus = cargar_estatus(sheet_url)
-
-        # DEBUG: Ver qué trae df_estatus
-        if df_estatus is not None:
-            st.write("**DEBUG - Primeras filas de Estatus:**")
-            st.write(df_estatus.head())
-            st.write(f"Total registros en Estatus: {len(df_estatus)}")
-            st.write(f"Columnas: {df_estatus.columns.tolist()}")
         
         if df is not None and not df.empty:
             # Filtrar por último mes
@@ -111,8 +103,6 @@ if sheet_url:
 
             # Cruzar con datos de entrega y calcular días de producción
             if df_estatus is not None:
-                # Convertir FECHA_ENTREGA a datetime antes de agrupar
-                # df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'])
                 
                 # Tomar solo la última entrega por orden (por si hay múltiples registros)
                 df_estatus_ultimo = df_estatus.groupby('ORDEN').agg({
@@ -125,10 +115,6 @@ if sheet_url:
                     on='ORDEN', 
                     how='left'
                 )
-
-                # DEBUG: Ver el resultado del merge
-                st.write("**DEBUG - Después del merge:**")
-                st.write(df_ultimo_mes[['ORDEN', 'FECHA DE VENTA', 'FECHA_ENTREGA']].head(10))
                 
                 # Calcular días de producción (solo para órdenes con fecha de entrega)
                 df_ultimo_mes['DIAS_PRODUCCION'] = None
