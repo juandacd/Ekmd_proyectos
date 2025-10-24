@@ -1,6 +1,4 @@
 import streamlit as st
-# import gspread
-# from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
@@ -33,6 +31,9 @@ def cargar_datos(sheet_url):
             'COMERCIAL ORDEN': 'ORDEN',
             'PRODUCCION ESTATUS': 'ESTATUS'
         })
+
+        # Convertir ORDEN a string
+        df['ORDEN'] = df['ORDEN'].astype(str)
         
         # Convertir fechas
         df['FECHA DE VENTA'] = pd.to_datetime(df['FECHA DE VENTA'], format='%d/%m/%Y', errors='coerce')
@@ -55,6 +56,33 @@ def cargar_datos(sheet_url):
     except Exception as e:
         st.error(f"Error al cargar datos: {str(e)}")
         return None
+    
+@st.cache_data(ttl=300)
+def cargar_estatus(sheet_url):
+    """Carga los datos de la hoja Estatus"""
+    try:
+        sheet_id = sheet_url.split('/d/')[1].split('/')[0]
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus"
+        
+        df_estatus = pd.read_csv(csv_url)
+        
+        # Renombrar columnas para que sea más fácil trabajar
+        df_estatus = df_estatus.rename(columns={
+            'Marca temporal': 'FECHA_ENTREGA',
+            'N° Orden': 'ORDEN'
+        })
+
+        # Convertir ORDEN a entero primero (elimina .0) y luego a string
+        df_estatus['ORDEN'] = df_estatus['ORDEN'].fillna(0).astype(float).astype(int).astype(str)
+        
+        # Convertir fecha de entrega (solo fecha, sin hora)
+        # Convertir fecha de entrega a datetime (pandas lo detectará automáticamente)
+        df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'], errors='coerce')
+        
+        return df_estatus
+    except Exception as e:
+        st.error(f"Error al cargar estatus: {str(e)}")
+        return None
 
 # Título principal
 st.title("Control de Producción y Logística - Ekonomodo")
@@ -65,15 +93,50 @@ sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCx
 
 if sheet_url:
     try:
-        # client = conectar_google_sheets()
-        # df = cargar_datos(client, sheet_url)
         df = cargar_datos(sheet_url)
+        df_estatus = cargar_estatus(sheet_url)
+
+        # DEBUG: Ver qué trae df_estatus
+        if df_estatus is not None:
+            st.write("**DEBUG - Primeras filas de Estatus:**")
+            st.write(df_estatus.head())
+            st.write(f"Total registros en Estatus: {len(df_estatus)}")
+            st.write(f"Columnas: {df_estatus.columns.tolist()}")
         
         if df is not None and not df.empty:
             # Filtrar por último mes
             fecha_actual = datetime.now()
             fecha_mes_atras = fecha_actual - timedelta(days=30)
             df_ultimo_mes = df[df['FECHA DE VENTA'] >= fecha_mes_atras]
+
+            # Cruzar con datos de entrega y calcular días de producción
+            if df_estatus is not None:
+                # Convertir FECHA_ENTREGA a datetime antes de agrupar
+                # df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'])
+                
+                # Tomar solo la última entrega por orden (por si hay múltiples registros)
+                df_estatus_ultimo = df_estatus.groupby('ORDEN').agg({
+                    'FECHA_ENTREGA': 'max'
+                }).reset_index()
+                
+                # Cruzar datos
+                df_ultimo_mes = df_ultimo_mes.merge(
+                    df_estatus_ultimo, 
+                    on='ORDEN', 
+                    how='left'
+                )
+
+                # DEBUG: Ver el resultado del merge
+                st.write("**DEBUG - Después del merge:**")
+                st.write(df_ultimo_mes[['ORDEN', 'FECHA DE VENTA', 'FECHA_ENTREGA']].head(10))
+                
+                # Calcular días de producción (solo para órdenes con fecha de entrega)
+                df_ultimo_mes['DIAS_PRODUCCION'] = None
+                mask = df_ultimo_mes['FECHA_ENTREGA'].notna() & df_ultimo_mes['FECHA DE VENTA'].notna()
+                df_ultimo_mes.loc[mask, 'DIAS_PRODUCCION'] = (
+                    df_ultimo_mes.loc[mask, 'FECHA_ENTREGA'] - 
+                    df_ultimo_mes.loc[mask, 'FECHA DE VENTA']
+                ).dt.days
             
             # ==== ALERTAS PRINCIPALES ====
             st.header("🚨 Alertas Importantes")
@@ -156,7 +219,7 @@ if sheet_url:
             # ==== MÉTRICAS GENERALES ====
             st.header("📊 Resumen del Último Mes")
             
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             
             with col1:
                 st.metric("Total Órdenes", len(df_ultimo_mes))
@@ -172,6 +235,16 @@ if sheet_url:
             with col4:
                 total_productos = df_ultimo_mes['CANTIDAD'].sum()
                 st.metric("Total Productos", int(total_productos))
+
+            with col5:
+                ordenes_entregadas = df_ultimo_mes[df_ultimo_mes['DIAS_PRODUCCION'].notna()]
+                if len(ordenes_entregadas) > 0:
+                    mediana = ordenes_entregadas['DIAS_PRODUCCION'].median()
+                    p75 = ordenes_entregadas['DIAS_PRODUCCION'].quantile(0.75)
+                    st.metric("Mediana Días", f"{mediana:.1f} días", 
+                            help=f"50% de órdenes ≤ {mediana:.1f} días | 75% ≤ {p75:.1f} días")
+                else:
+                    st.metric("Mediana Días", "N/A")
             
             st.divider()
             
@@ -218,7 +291,7 @@ if sheet_url:
                 produccion = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'PRODUCCION']
                 st.dataframe(
                     produccion[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                              'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
+                              'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'DIAS_PRODUCCION']],
                     hide_index=True,
                     use_container_width=True
                 )
@@ -227,7 +300,7 @@ if sheet_url:
                 logistica = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA']
                 st.dataframe(
                     logistica[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS LOGISTICA']],
+                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS LOGISTICA', 'DIAS_PRODUCCION']],
                     hide_index=True,
                     use_container_width=True
                 )
@@ -236,7 +309,7 @@ if sheet_url:
                 recibidos = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'RECIBIDO']
                 st.dataframe(
                     recibidos[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
+                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'DIAS_PRODUCCION']],
                     hide_index=True,
                     use_container_width=True
                 )
@@ -252,7 +325,7 @@ if sheet_url:
                         st.dataframe(
                             resultado[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'FECHA DE VENCIMIENTO',
                                      'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS', 
-                                     'ESTATUS LOGISTICA']],
+                                     'ESTATUS LOGISTICA', 'DIAS_PRODUCCION']],
                             hide_index=True,
                             use_container_width=True
                         )
