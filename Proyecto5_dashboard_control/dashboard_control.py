@@ -180,6 +180,12 @@ if sheet_url:
                 else:
                     st.success("✅ Todo recibido")
 
+            # Alerta: Órdenes vencidas
+            vencidas = df_ultimo_mes[
+                (df_ultimo_mes['FECHA DE VENCIMIENTO'] < fecha_actual) &
+                (df_ultimo_mes['ESTATUS'] == 'PRODUCCION')
+            ]
+
             # Nueva fila de alertas
             col4, col5, col6 = st.columns(3)
 
@@ -199,6 +205,18 @@ if sheet_url:
                         )
                 else:
                     st.success("✅ Todos los entregados recibidos")
+
+            with col5:
+                if len(vencidas) > 0:
+                    st.error(f"🔴 {len(vencidas)} órdenes VENCIDAS")
+                    with st.expander("Ver detalles"):
+                        st.dataframe(
+                            vencidas[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                                    'FECHA DE VENCIMIENTO', 'ESTATUS', 'DIAS_PRODUCCION']],
+                            hide_index=True
+                        )
+                else:
+                    st.success("✅ No hay órdenes vencidas")
             
             st.divider()
             

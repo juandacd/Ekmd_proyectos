@@ -70,37 +70,26 @@ def load_libro_ventas(file_obj, year_label):
         # Normalizar nombres de columnas
         df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
         
-        # Mapear nombres de columnas a los esperados
-        column_mapping = {}
-        for col in df.columns:
-            if 'GRAVADAS' in col and 'IVA' in col:
-                column_mapping[col] = 'VALOR_REAL'
-            elif col == 'NRO':
-                column_mapping[col] = 'NRO'
-            elif 'FECHA' in col:
-                column_mapping[col] = 'FECHA'
-        
-        df = df.rename(columns=column_mapping)
-        
-        # Verificar columnas requeridas
-        if 'NRO' not in df.columns or 'VALOR_REAL' not in df.columns:
-            st.error(f"Libro {year_label}: Faltan columnas NRO o GRAVADAS_IVA")
+        # Verificar columnas requeridas (ahora son NUMERO y VALOR_VENTA)
+        if 'NUMERO' not in df.columns or 'VALOR_VENTA' not in df.columns:
+            st.error(f"Libro {year_label}: Faltan columnas NUMERO o VALOR_VENTA")
             st.info(f"Columnas encontradas: {list(df.columns)}")
             return pd.DataFrame()
         
-        # Normalizar NRO
-        df['NRO'] = df['NRO'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        # Normalizar NUMERO
+        df['NUMERO'] = df['NUMERO'].astype(str).str.replace('.0', '', regex=False).str.strip()
         
-        # Normalizar VALOR_REAL
-        df['VALOR_REAL'] = pd.to_numeric(df['VALOR_REAL'], errors='coerce').fillna(0)
+        # Normalizar VALOR_VENTA
+        df['VALOR_VENTA'] = pd.to_numeric(df['VALOR_VENTA'], errors='coerce').fillna(0)
         
         # Filtrar registros válidos
-        df = df[df['VALOR_REAL'] > 0]
-        df = df[df['NRO'].str.len() > 0]
-        df = df[df['NRO'] != '0']
+        df = df[df['VALOR_VENTA'] > 0]
+        df = df[df['NUMERO'].str.len() > 0]
+        df = df[df['NUMERO'] != '0']
         
         df['PERIODO'] = year_label
         
+        st.success(f"Libro {year_label}: {len(df):,} registros válidos")
         return df
         
     except Exception as e:
@@ -119,6 +108,23 @@ def load_auxiliar(file_obj, year_label):
         # Leer directamente con encabezados en la primera fila
         df = pd.read_excel(file_obj, header=0)
         
+        # **MANEJAR COLUMNAS NOMBRE DUPLICADAS - MANTENER SOLO LA PRIMERA**
+        columnas_lista = df.columns.tolist()
+        nombre_count = columnas_lista.count('NOMBRE')
+
+        if nombre_count > 1:
+            # Encontrar índices de todas las columnas NOMBRE
+            indices_nombre = [i for i, col in enumerate(columnas_lista) if col == 'NOMBRE']
+            
+            # Renombrar la segunda NOMBRE a CIUDAD para eliminarla después
+            columnas_lista[indices_nombre[1]] = 'CIUDAD_TEMP'
+            df.columns = columnas_lista
+            
+            # Eliminar CIUDAD_TEMP
+            df = df.drop(columns=['CIUDAD_TEMP'], errors='ignore')
+            
+            st.info(f"Auxiliar: Se eliminó la segunda columna NOMBRE (ciudad)")
+
         # Normalizar nombres de columnas
         df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
         
@@ -232,33 +238,48 @@ def merge_catalogs(df, comercios_df, vendedores_df):
     if nombre_guardado and 'COMPROBA' in result.columns and 'NOMBRE_AUX_ORIGINAL' in result.columns:
         mask_z082 = result['COMPROBA'] == 'Z-082'
         
+        # Debug: ver qué valores tiene NOMBRE para Z-082
+        if mask_z082.sum() > 0:
+            nombres_z082 = result.loc[mask_z082, 'NOMBRE_AUX_ORIGINAL'].unique()
+            st.write(f"**DEBUG Z-082: Total registros = {mask_z082.sum()}**")
+            st.write(f"**Valores únicos en NOMBRE (primeros 20):**")
+            st.write(list(nombres_z082)[:20])
+        
+        # Buscar FALABELLA (más flexible)
         mask_falabella = mask_z082 & result['NOMBRE_AUX_ORIGINAL'].str.contains('FALABELLA', na=False, case=False)
         result.loc[mask_falabella, 'COMERCIO_NOMBRE'] = 'FALABELLA CT VERDE'
         
-        mask_seller = mask_z082 & ~result['NOMBRE_AUX_ORIGINAL'].str.contains('FALABELLA', na=False, case=False)
+        # Lo que NO contiene FALABELLA
+        mask_seller = mask_z082 & ~mask_falabella
         result.loc[mask_seller, 'COMERCIO_NOMBRE'] = 'FALABELLA SELLER'
         
         # Mostrar contador
         count_ct_verde = mask_falabella.sum()
         count_seller = mask_seller.sum()
-        if count_ct_verde > 0 or count_seller > 0:
-            st.info(f"✅ Z-082 clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER")
+        st.success(f"✅ Z-082 clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER (Total: {mask_z082.sum():,})")
         
         # Limpiar columna temporal
         result = result.drop(columns=['NOMBRE_AUX_ORIGINAL'], errors='ignore')
     
-    if vendedores_df is not None and 'VEND' in result.columns:
-        result['VEND'] = result['VEND'].astype(str).str.strip()
+    # Detectar si la columna es VENDEDOR o VEND
+    columna_vendedor = None
+    if 'VENDEDOR' in result.columns:
+        columna_vendedor = 'VENDEDOR'
+    elif 'VEND' in result.columns:
+        columna_vendedor = 'VEND'
+    
+    if vendedores_df is not None and columna_vendedor is not None:
+        result[columna_vendedor] = result[columna_vendedor].astype(str).str.strip()
         vendedores_df['VENDEDOR'] = vendedores_df['VENDEDOR'].astype(str).str.strip()
         
         result = result.merge(
-            vendedores_df.rename(columns={'VENDEDOR': 'VEND', 'NOMBRE': 'VENDEDOR_NOMBRE'}),
-            on='VEND',
+            vendedores_df.rename(columns={'VENDEDOR': columna_vendedor, 'NOMBRE': 'VENDEDOR_NOMBRE'}),
+            on=columna_vendedor,
             how='left'
         )
-        result['VENDEDOR_NOMBRE'] = result['VENDEDOR_NOMBRE'].fillna(result['VEND'])
+        result['VENDEDOR_NOMBRE'] = result['VENDEDOR_NOMBRE'].fillna(result[columna_vendedor])
     else:
-        result['VENDEDOR_NOMBRE'] = result.get('VEND', 'N/D')
+        result['VENDEDOR_NOMBRE'] = result.get(columna_vendedor, 'N/D') if columna_vendedor else 'N/D'
     
     return result
 
@@ -324,80 +345,59 @@ else:
     aux_all = pd.DataFrame()
 
 # ==========================
-# DIAGNÓSTICO DE CRUCE
+# CRUCE DE DATOS
 # ==========================
-if not libro_all.empty and not aux_all.empty:
-
+# Eliminar duplicados en Auxiliar
+if not aux_all.empty:
     aux_all = aux_all.drop_duplicates(subset=['NRO_CRUCE'], keep='first')
-    
-    # col_diag1, col_diag2 = st.columns(2)
-    
-    # with col_diag1:
-    #     st.subheader("📘 Libro de Ventas")
-    #     st.write(f"**Total registros:** {len(libro_all):,}")
-    #     st.write(f"**Columnas:** {', '.join(libro_all.columns.tolist())}")
-    #     st.write("**Muestra de NRO (primeros 10):**")
-    #     nro_sample = libro_all['NRO'].head(10).tolist()
-    #     for i, nro in enumerate(nro_sample, 1):
-    #         st.write(f"{i}. `{nro}` (tipo: {type(nro).__name__}, longitud: {len(str(nro))})")
-    
-    # with col_diag2:
-    #     st.subheader("📗 Auxiliar")
-    #     st.write(f"**Total registros:** {len(aux_all):,}")
-    #     st.write(f"**Columnas:** {', '.join(aux_all.columns.tolist())}")
-    #     st.write("**Muestra de NRO_CRUCE (primeros 10):**")
-    #     nro_cruce_sample = aux_all['NRO_CRUCE'].head(10).tolist()
-    #     for i, nro in enumerate(nro_cruce_sample, 1):
-    #         st.write(f"{i}. `{nro}` (tipo: {type(nro).__name__}, longitud: {len(str(nro))})")
 
+# Inicializar df_all
 df_all = pd.DataFrame()
 
-# CRUCE: Libro (NRO) con Auxiliar (NRO_CRUCE)
+# CRUCE: Libro (NUMERO) con Auxiliar (NRO_CRUCE)
 if not libro_all.empty and not aux_all.empty:
+    # PREPARAR AUXILIAR: Seleccionar COMPROBA, REFERENCIA y DESCRIPCION
+    columnas_aux_necesarias = ['NRO_CRUCE', 'COMPROBA', 'REFERENCIA', 'DESCRIPCION']
+    columnas_aux_disponibles = [col for col in columnas_aux_necesarias if col in aux_all.columns]
+
+    aux_para_merge = aux_all[columnas_aux_disponibles].copy()
+
+    # HACER EL CRUCE: Libro (NUMERO) con Auxiliar (NRO_CRUCE)
     df_all = libro_all.merge(
-        aux_all,
-        left_on='NRO',
-        right_on='NRO_CRUCE',
-        how='inner',
-        suffixes=('_LIBRO', '_AUX')  # Sufijos para columnas duplicadas
+        aux_para_merge,
+        left_on='NUMERO',  # Columna del Libro (antes era NRO)
+        right_on='NRO_CRUCE',  # Columna del Auxiliar
+        how='left'  # LEFT join: mantiene todos los registros del Libro
     )
     
-    # Renombrar columnas para consistencia
-    rename_dict = {}
+    # Renombrar VALOR_VENTA a VALOR para compatibilidad con el resto del código
+    df_all = df_all.rename(columns={'VALOR_VENTA': 'VALOR'})
     
-    # Manejar FECHA
-    if 'FECHA_LIBRO' in df_all.columns:
-        rename_dict['FECHA_LIBRO'] = 'FECHA'
-    elif 'FECHA_AUX' in df_all.columns:
-        rename_dict['FECHA_AUX'] = 'FECHA'
+    # Verificar que existe la columna VALOR
+    if 'VALOR' not in df_all.columns:
+        st.error("❌ No se encontró la columna VALOR_VENTA")
+        st.info(f"Columnas disponibles: {list(df_all.columns)}")
     
-    # Valor real
-    if 'VALOR_REAL' in df_all.columns:
-        rename_dict['VALOR_REAL'] = 'VALOR'
+    # Verificar que existe la columna VENDEDOR
+    if 'VENDEDOR' not in df_all.columns:
+        st.warning("⚠️ No se encontró la columna VENDEDOR en el Libro de Ventas")
     
-    # Cantidad
-    if 'CANTENTREGA' in df_all.columns:
-        rename_dict['CANTENTREGA'] = 'CANTIDAD'
+    # Eliminar filas donde no hubo match en el auxiliar
+    registros_antes = len(df_all)
+    df_all = df_all[df_all['NRO_CRUCE'].notna()]
+    registros_perdidos = registros_antes - len(df_all)
     
-    # NOMBRE del auxiliar (el importante)
-    if 'NOMBRE_AUX' in df_all.columns:
-        rename_dict['NOMBRE_AUX'] = 'NOMBRE'
+    if registros_perdidos > 0:
+        st.warning(f"⚠️ {registros_perdidos:,} registros del Libro no tuvieron match en Auxiliar")
     
-    df_all = df_all.rename(columns=rename_dict)
-    
-    # Seleccionar columnas necesarias
-    columnas_base = ['NRO', 'FECHA', 'VALOR', 'PERIODO', 'REFERENCIA', 
-                     'DESCRIPCION', 'COMPROBA', 'VEND', 'CANTIDAD', 
-                     'NRO_CRUCE', 'NOMBRE']
-    
-    columnas_finales = [col for col in columnas_base if col in df_all.columns]
-    df_all = df_all[columnas_finales].copy()
+    # Limpiar columnas duplicadas
+    df_all = df_all.loc[:, ~df_all.columns.duplicated(keep='first')]
     
     # Extraer año del PERIODO
     if 'PERIODO' in df_all.columns:
         df_all['AÑO'] = pd.to_numeric(df_all['PERIODO'], errors='coerce').fillna(0).astype(int)
     
-    # Si existe FECHA, extraer mes
+    # Extraer mes de FECHA
     if 'FECHA' in df_all.columns:
         df_all['FECHA'] = pd.to_datetime(df_all['FECHA'], errors='coerce')
         df_all['MES_NUM'] = df_all['FECHA'].dt.month.fillna(1).astype(int)
@@ -408,18 +408,123 @@ if not libro_all.empty and not aux_all.empty:
         df_all['MES_ABBR'] = 'ENE'
         df_all['AÑO_MES'] = df_all['AÑO'].astype(str) + '-01'
     
+    # Crear columna CANTIDAD si no existe
+    if 'CANTIDAD' not in df_all.columns:
+        df_all['CANTIDAD'] = 1  # Asumir 1 unidad por transacción
+    
     st.success(f"✅ Cruce exitoso: {len(df_all):,} registros con datos completos")
-    st.write(f"**Columnas finales:** {list(df_all.columns)}")
 
 # Unir con catálogos
 if not df_all.empty:
-    df_all = merge_catalogs(df_all, comercios_cat, vendedores_cat)
+    # Catálogo de comercios
+    if comercios_cat is not None and 'COMPROBA' in df_all.columns:
+        df_all['COMPROBA'] = df_all['COMPROBA'].astype(str).str.strip()
+        comercios_cat['Z'] = comercios_cat['Z'].astype(str).str.strip()
+        
+        df_all = df_all.merge(
+            comercios_cat.rename(columns={'Z': 'COMPROBA', 'NOMBRE': 'COMERCIO_NOMBRE'}),
+            on='COMPROBA',
+            how='left'
+        )
+        df_all['COMERCIO_NOMBRE'] = df_all['COMERCIO_NOMBRE'].fillna(df_all['COMPROBA'])
+    else:
+        df_all['COMERCIO_NOMBRE'] = df_all.get('COMPROBA', 'N/D')
     
-    # **LIMPIAR COLUMNAS DUPLICADAS**
+    # Catálogo de vendedores (usa la columna VENDEDOR que ya existe)
+    if 'VENDEDOR' in df_all.columns:
+        if vendedores_cat is not None:
+            df_all['VENDEDOR'] = df_all['VENDEDOR'].astype(str).str.strip()
+            vendedores_cat['VENDEDOR'] = vendedores_cat['VENDEDOR'].astype(str).str.strip()
+            
+            df_all = df_all.merge(
+                vendedores_cat.rename(columns={'NOMBRE': 'VENDEDOR_NOMBRE'}),
+                on='VENDEDOR',
+                how='left'
+            )
+            df_all['VENDEDOR_NOMBRE'] = df_all['VENDEDOR_NOMBRE'].fillna(df_all['VENDEDOR'])
+        else:
+            df_all['VENDEDOR_NOMBRE'] = df_all['VENDEDOR']
+    else:
+        df_all['VENDEDOR_NOMBRE'] = 'N/D'
+    
+    # Limpiar columnas duplicadas
     df_all = df_all.loc[:, ~df_all.columns.duplicated(keep='first')]
+
+# **REGLA ESPECIAL FALABELLA USANDO PLATAFORMA Y CLIENTE**
+if 'PLATAFORMA' in df_all.columns and 'CLIENTE' in df_all.columns:
+    # Normalizar: quitar espacios, convertir a mayúsculas
+    df_all['PLATAFORMA_NORM'] = df_all['PLATAFORMA'].astype(str).str.replace(' ', '').str.upper().str.strip()
+    df_all['CLIENTE_NORM'] = df_all['CLIENTE'].astype(str).str.replace(' ', '').str.upper().str.strip()
     
-    # Verificar columnas finales
-    st.write(f"**Columnas después de limpieza:** {list(df_all.columns)}")
+    # Buscar cualquier registro que CONTENGA 'FALABELLA' en PLATAFORMA
+    mask_falabella = df_all['PLATAFORMA_NORM'].str.contains('FALABELLA', na=False)
+    
+    # Debug: ver qué valores tiene CLIENTE para PLATAFORMA con FALABELLA
+    if mask_falabella.sum() > 0:
+        clientes_falabella = df_all.loc[mask_falabella, ['PLATAFORMA', 'PLATAFORMA_NORM', 'CLIENTE', 'CLIENTE_NORM']].drop_duplicates()
+        st.write(f"**DEBUG FALABELLA: Total registros = {mask_falabella.sum()}**")
+        st.write(f"**Valores únicos en PLATAFORMA y CLIENTE:**")
+        st.dataframe(clientes_falabella.head(20))
+    
+    # 1. FALABELLA CT VERDE: cuando CLIENTE también contiene FALABELLA
+    mask_ct_verde = mask_falabella & df_all['CLIENTE_NORM'].str.contains('FALABELLA', na=False)
+    df_all.loc[mask_ct_verde, 'COMERCIO_NOMBRE'] = 'FALABELLA CT VERDE'
+    
+    # 2. FALABELLA SELLER: cuando CLIENTE NO contiene FALABELLA
+    mask_seller = mask_falabella & ~mask_ct_verde
+    df_all.loc[mask_seller, 'COMERCIO_NOMBRE'] = 'FALABELLA SELLER'
+    
+    # Mostrar contador
+    count_ct_verde = mask_ct_verde.sum()
+    count_seller = mask_seller.sum()
+    st.success(f"✅ FALABELLA clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER (Total: {mask_falabella.sum():,})")
+    
+    # Limpiar columnas temporales
+    df_all = df_all.drop(columns=['PLATAFORMA_NORM', 'CLIENTE_NORM'], errors='ignore')
+else:
+    st.warning("⚠️ No se encontraron las columnas PLATAFORMA y/o CLIENTE para aplicar la regla de Falabella")
+
+# ==========================
+# DESCARGAR DATOS COMPLETOS
+# ==========================
+if not df_all.empty:
+    st.markdown("---")
+    st.header("📥 Descargar Datos Completos")
+    
+    col_desc1, col_desc2 = st.columns([2, 1])
+    
+    with col_desc1:
+        st.write(f"**Total de registros:** {len(df_all):,}")
+        st.write(f"**Total de columnas:** {len(df_all.columns)}")
+        st.write(f"**Columnas disponibles:** {', '.join(df_all.columns.tolist())}")
+    
+    with col_desc2:
+        # Botón de descarga en Excel
+        from io import BytesIO
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_all.to_excel(writer, index=False, sheet_name='Datos_Completos')
+        
+        excel_data = output.getvalue()
+        
+        st.download_button(
+            label="📊 Descargar DataFrame Completo (Excel)",
+            data=excel_data,
+            file_name=f"dashboard_ventas_completo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_excel_completo"
+        )
+        
+        # Botón alternativo en CSV
+        csv_completo = df_all.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button(
+            label="📄 Descargar DataFrame Completo (CSV)",
+            data=csv_completo,
+            file_name=f"dashboard_ventas_completo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            key="download_csv_completo"
+        )
 
 # ==========================
 # Filtros
@@ -811,15 +916,8 @@ if not df_filtered.empty:
             "🎯 Referencias para 95% ventas",
             f"{items_95} de {total_refs}",
             f"{100*items_95/total_refs:.1f}%"
-        )
-        
-        # # Índice de Herfindahl-Hirschman (HHI)
-        # ventas_total_hhi = ref_analysis['VALOR'].sum()
-        # if ventas_total_hhi > 0:
-        #     shares = (ref_analysis['VALOR'] / ventas_total_hhi) ** 2
-        #     hhi = 10000 * shares.sum()
-        #     # col_pareto4.metric("📊 Concentración (HHI)", f"{hhi:,.0f}")
-        
+        )  
+
         # Interpretación del análisis de Pareto
         st.info(f"""
         **Interpretación del Análisis de Pareto:**
