@@ -136,7 +136,7 @@ if sheet_url:
             proximos_vencer = df_ultimo_mes[
                 (df_ultimo_mes['FECHA DE VENCIMIENTO'] <= fecha_limite) & 
                 (df_ultimo_mes['FECHA DE VENCIMIENTO'] >= fecha_actual) &
-                (df_ultimo_mes['ESTATUS'] != 'ENTREGADO')
+                (df_ultimo_mes['ESTATUS'] == 'PRODUCCION')
             ]
             
             with col1:
