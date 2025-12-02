@@ -55,8 +55,6 @@ def load_google_sheet(url):
 # URL de tu Google Sheet
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1L_gT_jKH_7KKqdqj_tVm5IeWHVO2fYOr5UvKUp6uZmo/edit?usp=sharing"
 
-catalog_file = st.sidebar.file_uploader("Sube el catálogo de productos EKM (opcional)", type=["xlsx", "xls"])
-
 if SHEET_URL:
     try:
         df = load_google_sheet(SHEET_URL)
@@ -71,15 +69,22 @@ if SHEET_URL:
         if "DESPACHADO" in df.columns:
             df = df[~df["DESPACHADO"].astype(str).str.strip().str.upper().str.contains("CANCELADO", na=False)]
 
-        # Cargar catálogo de productos si está disponible
+        # Cargar catálogo de productos desde la misma hoja de Google Sheets
         catalog_df = None
-        if catalog_file:
-            try:
-                catalog_df = pd.read_excel(catalog_file)
-                catalog_df.columns = catalog_df.columns.astype(str).str.strip().str.upper()
-                st.sidebar.success("✅ Catálogo cargado correctamente")
-            except Exception as e:
-                st.sidebar.error(f"Error al cargar catálogo: {str(e)}")
+        try:
+            # Función para cargar la hoja de catálogo
+            @st.cache_data(ttl=300)
+            def load_catalog_sheet(url):
+                file_id = url.split('/d/')[1].split('/')[0]
+                export_url = f'https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx'
+                response = requests.get(export_url)
+                return pd.read_excel(BytesIO(response.content), sheet_name="LISTA DE PRECIOS")
+            
+            catalog_df = load_catalog_sheet(SHEET_URL)
+            catalog_df.columns = catalog_df.columns.astype(str).str.strip().str.upper()
+            st.sidebar.success("✅ Catálogo cargado correctamente desde Google Sheets")
+        except Exception as e:
+            st.sidebar.warning(f"No se pudo cargar el catálogo: {str(e)}")
         
         # ======================
         # Filtros en sidebar
