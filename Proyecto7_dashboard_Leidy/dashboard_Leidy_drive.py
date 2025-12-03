@@ -55,6 +55,11 @@ def load_google_sheet(url):
 # URL de tu Google Sheet
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1L_gT_jKH_7KKqdqj_tVm5IeWHVO2fYOr5UvKUp6uZmo/edit?usp=sharing"
 
+# Botón para forzar actualización
+if st.sidebar.button("🔄 Actualizar Datos"):
+    st.cache_data.clear()
+    st.rerun()
+
 if SHEET_URL:
     try:
         df = load_google_sheet(SHEET_URL)
