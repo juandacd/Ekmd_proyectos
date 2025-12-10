@@ -212,14 +212,15 @@ if SHEET_URL:
         # ======================
         
         # Crear pestañas para mejor organización
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
             "📋 No Facturados", 
             "📦 No Despachados", 
             "🏪 Por Comercio", 
             "⚠️ Alertas", 
             "📊 Análisis", 
             "📈 Gráficos",
-            "💰 Costos",
+            "💰 Fletes",
+            "💵 Ventas",
             "🏆 Top Productos"
         ])
         
@@ -366,56 +367,221 @@ if SHEET_URL:
                 st.plotly_chart(fig3, use_container_width=True)
         
         with tab7:
-                    st.subheader("💰 Análisis de Costos")
+            st.subheader("🚚 Análisis de Costos de Fletes (EKMFLETES)")
+            
+            if "COSTO TOTAL ANTES DE IVA" in df.columns and "SKU EKM" in df.columns:
+                # Filtrar solo los fletes (SKU que contengan EKMFLETE)
+                df_fletes = df[df["SKU EKM"].astype(str).str.upper().str.contains("EKMFLETE", na=False)].copy()
+                
+                if len(df_fletes) > 0:
+                    # Convertir a numérico
+                    df_fletes["COSTO_NUMERICO"] = pd.to_numeric(df_fletes["COSTO TOTAL ANTES DE IVA"], errors='coerce')
                     
-                    if "COSTO TOTAL ANTES DE IVA" in df.columns:
-                        # Convertir a numérico
-                        df["COSTO_NUMERICO"] = pd.to_numeric(df["COSTO TOTAL ANTES DE IVA"], errors='coerce')
+                    # KPIs de flete
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        total_flete = df_fletes["COSTO_NUMERICO"].sum()
+                        st.metric("💵 Gasto Total en Fletes", f"${total_flete:,.2f}")
+                    with col2:
+                        promedio_flete = df_fletes["COSTO_NUMERICO"].mean()
+                        st.metric("📊 Costo Promedio por Flete", f"${promedio_flete:,.2f}")
+                    with col3:
+                        total_fletes = len(df_fletes)
+                        st.metric("🚚 Cantidad de Fletes", total_fletes)
+                    
+                    # Agregar columnas de mes y año
+                    if "FECHA DE ORDEN" in df_fletes.columns:
+                        df_fletes["MES_AÑO"] = df_fletes["FECHA DE ORDEN"].dt.to_period('M').astype(str)
                         
-                        # KPIs de costo
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            total_costo = df["COSTO_NUMERICO"].sum()
-                            st.metric("💵 Costo Total", f"${total_costo:,.2f}")
-                        with col2:
-                            promedio_costo = df["COSTO_NUMERICO"].mean()
-                            st.metric("📊 Costo Promedio", f"${promedio_costo:,.2f}")
-                        with col3:
-                            total_pedidos_costo = df["COSTO_NUMERICO"].notna().sum()
-                            st.metric("📦 Pedidos con Costo", total_pedidos_costo)
+                        # Análisis por mes
+                        st.write("**Gastos en Fletes por Mes:**")
+                        fletes_por_mes = df_fletes.groupby("MES_AÑO")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        fletes_por_mes.columns = ['Gasto Total en Fletes', 'Cantidad de Fletes', 'Costo Promedio']
+                        # Formatear columnas de dinero
+                        fletes_por_mes['Gasto Total en Fletes'] = fletes_por_mes['Gasto Total en Fletes'].apply(lambda x: f"${x:,.2f}")
+                        fletes_por_mes['Costo Promedio'] = fletes_por_mes['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(fletes_por_mes, use_container_width=True)
+                    
+                    # Análisis por plataforma
+                    if "PLATAFORMA" in df_fletes.columns:
+                        st.write("**Gastos en Fletes por Plataforma:**")
+                        fletes_por_plataforma = df_fletes.groupby("PLATAFORMA")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        fletes_por_plataforma.columns = ['Gasto Total en Fletes', 'Cantidad de Fletes', 'Costo Promedio']
+                        fletes_por_plataforma = fletes_por_plataforma.sort_values('Gasto Total en Fletes', ascending=False)
+                        # Formatear columnas de dinero
+                        fletes_por_plataforma['Gasto Total en Fletes'] = fletes_por_plataforma['Gasto Total en Fletes'].apply(lambda x: f"${x:,.2f}")
+                        fletes_por_plataforma['Costo Promedio'] = fletes_por_plataforma['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(fletes_por_plataforma, use_container_width=True)
+                    
+                    # Análisis por bodega
+                    if "BODEGA" in df_fletes.columns:
+                        st.write("**Gastos en Fletes por Bodega:**")
+                        fletes_por_bodega = df_fletes.groupby("BODEGA")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        fletes_por_bodega.columns = ['Gasto Total en Fletes', 'Cantidad de Fletes', 'Costo Promedio']
+                        fletes_por_bodega = fletes_por_bodega.sort_values('Gasto Total en Fletes', ascending=False)
+                        # Formatear columnas de dinero
+                        fletes_por_bodega['Gasto Total en Fletes'] = fletes_por_bodega['Gasto Total en Fletes'].apply(lambda x: f"${x:,.2f}")
+                        fletes_por_bodega['Costo Promedio'] = fletes_por_bodega['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(fletes_por_bodega, use_container_width=True)
+
+                    # Análisis por bodega
+                    if "BODEGA" in df_fletes.columns:
+                        st.write("**Gastos en Fletes por Bodega:**")
+                        fletes_por_bodega = df_fletes.groupby("BODEGA")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        fletes_por_bodega.columns = ['Gasto Total en Fletes', 'Cantidad de Fletes', 'Costo Promedio']
+                        fletes_por_bodega = fletes_por_bodega.sort_values('Gasto Total en Fletes', ascending=False)
+                        # Formatear columnas de dinero
+                        fletes_por_bodega['Gasto Total en Fletes'] = fletes_por_bodega['Gasto Total en Fletes'].apply(lambda x: f"${x:,.2f}")
+                        fletes_por_bodega['Costo Promedio'] = fletes_por_bodega['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(fletes_por_bodega, use_container_width=True)
+                    
+                    # Análisis por comercial
+                    if "COMERCIAL" in df_fletes.columns:
+                        st.write("**Gastos en Fletes por Comercial:**")
+                        fletes_por_comercial = df_fletes.groupby("COMERCIAL")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        fletes_por_comercial.columns = ['Gasto Total en Fletes', 'Cantidad de Fletes', 'Costo Promedio']
+                        fletes_por_comercial = fletes_por_comercial.sort_values('Gasto Total en Fletes', ascending=False)
+                        # Formatear columnas de dinero
+                        fletes_por_comercial['Gasto Total en Fletes'] = fletes_por_comercial['Gasto Total en Fletes'].apply(lambda x: f"${x:,.2f}")
+                        fletes_por_comercial['Costo Promedio'] = fletes_por_comercial['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(fletes_por_comercial, use_container_width=True)
                         
-                        # Agregar columnas de mes y año
-                        if "FECHA DE ORDEN" in df.columns:
-                            df["MES_AÑO"] = df["FECHA DE ORDEN"].dt.to_period('M').astype(str)
-                            
-                            # Análisis por mes
-                            st.write("**Costos por Mes:**")
-                            costos_por_mes = df.groupby("MES_AÑO")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
-                            costos_por_mes.columns = ['Costo Total', 'Cantidad Pedidos', 'Costo Promedio']
-                            # Formatear columnas de dinero
-                            costos_por_mes['Costo Total'] = costos_por_mes['Costo Total'].apply(lambda x: f"${x:,.2f}")
-                            costos_por_mes['Costo Promedio'] = costos_por_mes['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
-                            st.dataframe(costos_por_mes, use_container_width=True)
-                        
-                        # Análisis por plataforma
-                        if "PLATAFORMA" in df.columns:
-                            st.write("**Costos por Plataforma:**")
-                            costos_por_plataforma = df.groupby("PLATAFORMA")["COSTO_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
-                            costos_por_plataforma.columns = ['Costo Total', 'Cantidad Pedidos', 'Costo Promedio']
-                            # Formatear columnas de dinero
-                            costos_por_plataforma['Costo Total'] = costos_por_plataforma['Costo Total'].apply(lambda x: f"${x:,.2f}")
-                            costos_por_plataforma['Costo Promedio'] = costos_por_plataforma['Costo Promedio'].apply(lambda x: f"${x:,.2f}")
-                            st.dataframe(costos_por_plataforma.sort_values('Costo Total', ascending=False), use_container_width=True)
-                        
-                    else:
-                        st.warning("No se encontró la columna 'COSTO TOTAL ANTES DE IVA'")
+                else:
+                    st.warning("No se encontraron pedidos con SKU que contengan 'EKMFLETE'")
+                
+            else:
+                st.warning("No se encontraron las columnas necesarias: 'COSTO TOTAL ANTES DE IVA' o 'SKU EKM'")
 
         with tab8:
+            st.subheader("💵 Análisis de Ventas")
+            
+            if "COSTO TOTAL ANTES DE IVA" in df.columns and "SKU EKM" in df.columns:
+                # Excluir fletes de las ventas
+                df_ventas = df[~df["SKU EKM"].astype(str).str.upper().str.contains("EKMFLETE", na=False)].copy()
+                
+                if len(df_ventas) > 0:
+                    # Convertir a numérico
+                    df_ventas["VENTA_NUMERICO"] = pd.to_numeric(df_ventas["COSTO TOTAL ANTES DE IVA"], errors='coerce')
+                    
+                    # KPIs principales de ventas
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        total_ventas = df_ventas["VENTA_NUMERICO"].sum()
+                        st.metric("💰 Ventas Totales", f"${total_ventas:,.2f}")
+                    with col2:
+                        promedio_venta = df_ventas["VENTA_NUMERICO"].mean()
+                        st.metric("📊 Venta Promedio", f"${promedio_venta:,.2f}")
+                    with col3:
+                        total_pedidos_venta = len(df_ventas)
+                        st.metric("📦 Total Pedidos", total_pedidos_venta)
+                    with col4:
+                        ticket_promedio = total_ventas / total_pedidos_venta if total_pedidos_venta > 0 else 0
+                        st.metric("🎫 Ticket Promedio", f"${ticket_promedio:,.2f}")
+                    
+                    st.markdown("---")
+                    
+                    # Análisis por mes
+                    if "FECHA DE ORDEN" in df_ventas.columns:
+                        df_ventas["MES_AÑO"] = df_ventas["FECHA DE ORDEN"].dt.to_period('M').astype(str)
+                        
+                        st.write("### 📅 Ventas por Mes")
+                        ventas_por_mes = df_ventas.groupby("MES_AÑO")["VENTA_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        ventas_por_mes.columns = ['Ventas Totales', 'Cantidad Pedidos', 'Venta Promedio']
+                        ventas_por_mes = ventas_por_mes.sort_index(ascending=False)
+                        
+                        # Formatear columnas de dinero
+                        ventas_por_mes_display = ventas_por_mes.copy()
+                        ventas_por_mes_display['Ventas Totales'] = ventas_por_mes_display['Ventas Totales'].apply(lambda x: f"${x:,.2f}")
+                        ventas_por_mes_display['Venta Promedio'] = ventas_por_mes_display['Venta Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(ventas_por_mes_display, use_container_width=True)
+                        
+                        # Gráfico de ventas por mes
+                        fig_ventas_mes = px.bar(
+                            x=ventas_por_mes.index,
+                            y=ventas_por_mes['Ventas Totales'],
+                            title="Evolución de Ventas Mensuales",
+                            labels={"x": "Mes", "y": "Ventas ($)"}
+                        )
+                        st.plotly_chart(fig_ventas_mes, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # Análisis por plataforma
+                    if "PLATAFORMA" in df_ventas.columns:
+                        st.write("### 🏪 Ventas por Plataforma")
+                        ventas_por_plataforma = df_ventas.groupby("PLATAFORMA")["VENTA_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        ventas_por_plataforma.columns = ['Ventas Totales', 'Cantidad Pedidos', 'Venta Promedio']
+                        ventas_por_plataforma = ventas_por_plataforma.sort_values('Ventas Totales', ascending=False)
+                        
+                        # Formatear columnas de dinero
+                        ventas_por_plataforma_display = ventas_por_plataforma.copy()
+                        ventas_por_plataforma_display['Ventas Totales'] = ventas_por_plataforma_display['Ventas Totales'].apply(lambda x: f"${x:,.2f}")
+                        ventas_por_plataforma_display['Venta Promedio'] = ventas_por_plataforma_display['Venta Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(ventas_por_plataforma_display, use_container_width=True)
+                        
+                        # Gráfico de ventas por plataforma
+                        fig_ventas_plataforma = px.pie(
+                            values=ventas_por_plataforma['Ventas Totales'],
+                            names=ventas_por_plataforma.index,
+                            title="Distribución de Ventas por Plataforma"
+                        )
+                        st.plotly_chart(fig_ventas_plataforma, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # Análisis por comercial
+                    if "COMERCIAL" in df_ventas.columns:
+                        st.write("### 👤 Ventas por Comercial")
+                        ventas_por_comercial = df_ventas.groupby("COMERCIAL")["VENTA_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        ventas_por_comercial.columns = ['Ventas Totales', 'Cantidad Pedidos', 'Venta Promedio']
+                        ventas_por_comercial = ventas_por_comercial.sort_values('Ventas Totales', ascending=False)
+                        
+                        # Formatear columnas de dinero
+                        ventas_por_comercial_display = ventas_por_comercial.copy()
+                        ventas_por_comercial_display['Ventas Totales'] = ventas_por_comercial_display['Ventas Totales'].apply(lambda x: f"${x:,.2f}")
+                        ventas_por_comercial_display['Venta Promedio'] = ventas_por_comercial_display['Venta Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(ventas_por_comercial_display, use_container_width=True)
+                        
+                        # Gráfico de ventas por comercial
+                        fig_ventas_comercial = px.bar(
+                            x=ventas_por_comercial['Ventas Totales'],
+                            y=ventas_por_comercial.index,
+                            orientation='h',
+                            title="Ranking de Ventas por Comercial",
+                            labels={"x": "Ventas ($)", "y": "Comercial"}
+                        )
+                        st.plotly_chart(fig_ventas_comercial, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # Análisis por bodega
+                    if "BODEGA" in df_ventas.columns:
+                        st.write("### 🏭 Ventas por Bodega")
+                        ventas_por_bodega = df_ventas.groupby("BODEGA")["VENTA_NUMERICO"].agg(['sum', 'count', 'mean']).round(2)
+                        ventas_por_bodega.columns = ['Ventas Totales', 'Cantidad Pedidos', 'Venta Promedio']
+                        ventas_por_bodega = ventas_por_bodega.sort_values('Ventas Totales', ascending=False)
+                        
+                        # Formatear columnas de dinero
+                        ventas_por_bodega_display = ventas_por_bodega.copy()
+                        ventas_por_bodega_display['Ventas Totales'] = ventas_por_bodega_display['Ventas Totales'].apply(lambda x: f"${x:,.2f}")
+                        ventas_por_bodega_display['Venta Promedio'] = ventas_por_bodega_display['Venta Promedio'].apply(lambda x: f"${x:,.2f}")
+                        st.dataframe(ventas_por_bodega_display, use_container_width=True)
+                    
+                else:
+                    st.warning("No se encontraron datos de ventas (todos los pedidos son fletes)")
+                
+            else:
+                st.warning("No se encontraron las columnas necesarias: 'COSTO TOTAL ANTES DE IVA' o 'SKU EKM'")
+
+        with tab9:
                     st.subheader("🏆 Productos Más Vendidos")
                     
                     if "SKU EKM" in df.columns:
+                        # Excluir fletes del análisis de top productos
+                        df_productos = df[~df["SKU EKM"].astype(str).str.upper().str.contains("EKMFLETE", na=False)].copy()
+                        
                         # Contar productos más vendidos
-                        top_productos = df["SKU EKM"].value_counts().head(20).reset_index()
+                        top_productos = df_productos["SKU EKM"].value_counts().head(20).reset_index()
                         top_productos.columns = ['SKU EKM', 'Cantidad Vendida']
                         
                         # Si hay catálogo, hacer el cruce
