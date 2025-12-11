@@ -62,7 +62,8 @@ if st.sidebar.button("🔄 Actualizar Datos"):
 
 if SHEET_URL:
     try:
-        df = load_google_sheet(SHEET_URL)
+        df_original = load_google_sheet(SHEET_URL)  # Guardar copia original
+        df = df_original.copy()  # Trabajar con copia
         
         # Normalizamos nombres de columnas (eliminar espacios y convertir a mayúsculas)
         df.columns = df.columns.astype(str).str.strip().str.upper()
@@ -70,9 +71,34 @@ if SHEET_URL:
         # Agregar indicadores de semana
         df = add_week_indicators(df)
 
+        # Limpiar columna # FACTURA ANTES de filtrar
+        if "# FACTURA" in df.columns:
+            df["# FACTURA"] = df["# FACTURA"].astype(str).str.strip().str.upper()
+            df["# FACTURA"] = df["# FACTURA"].replace(["", "#N/A", "#N/D", "NAN", "NONE"], pd.NA)
+            df["# FACTURA"] = pd.to_numeric(df["# FACTURA"], errors='coerce')
+        
+        # Guardar dataframe completo (con cancelados) para alertas
+        df_completo = df.copy()
+        
+        # Excluir pedidos cancelados SOLO del df de trabajo
+        if "DESPACHADO" in df.columns:
+            df = df[~df["DESPACHADO"].astype(str).str.strip().str.upper().str.contains("CANCELADO", na=False)]
+
         # Excluir pedidos cancelados de todos los análisis
         if "DESPACHADO" in df.columns:
             df = df[~df["DESPACHADO"].astype(str).str.strip().str.upper().str.contains("CANCELADO", na=False)]
+        
+        # AGREGAR AQUÍ: Limpiar y convertir columna # FACTURA
+        if "# FACTURA" in df.columns:
+            # Convertir todo a string primero
+            df["# FACTURA_ORIGINAL"] = df["# FACTURA"].copy()  # Guardar original
+            df["# FACTURA"] = df["# FACTURA"].astype(str).str.strip().str.upper()
+            
+            # Reemplazar valores vacíos y #N/A por NaN
+            df["# FACTURA"] = df["# FACTURA"].replace(["", "#N/A", "#N/D", "NAN", "NONE"], pd.NA)
+            
+            # Convertir a numérico (los que se puedan)
+            df["# FACTURA"] = pd.to_numeric(df["# FACTURA"], errors='coerce')
 
         # Cargar catálogo de productos desde la misma hoja de Google Sheets
         catalog_df = None
@@ -290,6 +316,50 @@ if SHEET_URL:
                 available_cols = [col for col in columns_to_show if col in alerta_vencimiento.columns]
                 st.dataframe(alerta_vencimiento[available_cols].sort_values("DIAS_RESTANTES"), 
                            use_container_width=True)
+                
+            st.markdown("---")
+            st.subheader("🚨 Pedidos Cancelados pero Facturados")
+            st.write("⚠️ Estos pedidos fueron cancelados pero tienen factura. Requieren revisión.")
+            
+            # Detectar pedidos cancelados con factura (usando df_completo)
+            pedidos_cancelados_facturados = df_completo[
+                (df_completo["DESPACHADO"].astype(str).str.strip().str.upper() == "CANCELADO") &
+                (df_completo["# FACTURA"].notna()) &
+                (df_completo["# FACTURA"] > 0)
+            ]
+            
+            st.write(f"Total: **{len(pedidos_cancelados_facturados)}** pedidos")
+            
+            if len(pedidos_cancelados_facturados) > 0:
+                # Mostrar tabla con los casos problemáticos
+                columns_to_show = ["ORDEN", "PLATAFORMA", "COMERCIAL", "# FACTURA", 
+                                 "DESPACHADO", "FECHA DE ORDEN", "GUIA", "BODEGA"]
+                available_cols = [col for col in columns_to_show if col in pedidos_cancelados_facturados.columns]
+                
+                # Crear copia para formatear
+                df_display = pedidos_cancelados_facturados[available_cols].copy()
+                
+                # Formatear columnas numéricas sin decimales
+                if "ORDEN" in df_display.columns:
+                    df_display["ORDEN"] = df_display["ORDEN"].apply(lambda x: f"{int(x)}" if pd.notna(x) else x)
+                if "# FACTURA" in df_display.columns:
+                    df_display["# FACTURA"] = df_display["# FACTURA"].apply(lambda x: f"{int(x)}" if pd.notna(x) else x)
+                
+                st.dataframe(
+                    df_display.style.apply(
+                        lambda x: ['background-color: #ffcccc'] * len(x), axis=1
+                    ),
+                    use_container_width=True
+                )
+                
+                # Resumen por plataforma
+                if "PLATAFORMA" in pedidos_cancelados_facturados.columns:
+                    st.write("**Casos por Plataforma:**")
+                    casos_por_plataforma = pedidos_cancelados_facturados["PLATAFORMA"].value_counts().reset_index()
+                    casos_por_plataforma.columns = ["PLATAFORMA", "Cantidad de Casos"]
+                    st.dataframe(casos_por_plataforma, use_container_width=True)
+            else:
+                st.success("✅ No hay pedidos cancelados con factura")
         
         with tab5:
             st.subheader("5. Análisis de Tiempos de Entrega")
