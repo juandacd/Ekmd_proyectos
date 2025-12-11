@@ -164,21 +164,24 @@ if sheet_url:
                         )
                 else:
                     st.success("✅ No hay devoluciones")
-            
-            # Alerta: Pendientes de recibir en logística
-            en_produccion = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA']
-            no_recibidos = en_produccion[en_produccion['ESTATUS LOGISTICA'] != 'RECIBIDO']
-            
-            with col3:
-                if len(no_recibidos) > 0:
-                    st.warning(f"📋 {len(no_recibidos)} órdenes pendientes de recibir")
+
+            # Alerta: Pendientes de despacho en logística
+            pendientes_despacho = df_ultimo_mes[
+                (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') & 
+                (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
+            ]
+
+            with col3:  # o col4 si añades una columna más
+                if len(pendientes_despacho) > 0:
+                    st.warning(f"📦 {len(pendientes_despacho)} órdenes pendientes de despachar")
                     with st.expander("Ver detalles"):
                         st.dataframe(
-                            no_recibidos[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'CANTIDAD']],
+                            pendientes_despacho[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                                                'CANTIDAD', 'LOGISTICA']],
                             hide_index=True
                         )
                 else:
-                    st.success("✅ Todo recibido")
+                    st.success("✅ Todo despachado")
 
             # Alerta: Órdenes vencidas
             vencidas = df_ultimo_mes[
@@ -235,12 +238,18 @@ if sheet_url:
             with col3:
                 en_logistica_count = len(df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA'])
                 st.metric("En Logística", en_logistica_count)
+
+            with col4:  # ajusta el número según tu layout
+                despachados_count = len(df_ultimo_mes[
+                    df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO'])
+                ])
+                st.metric("Despachados", despachados_count)
             
-            with col4:
+            with col5:
                 total_productos = df_ultimo_mes['CANTIDAD'].sum()
                 st.metric("Total Productos", int(total_productos))
 
-            with col5:
+            with col6:
                 ordenes_entregadas = df_ultimo_mes[df_ultimo_mes['DIAS_PRODUCCION'].notna()]
                 if len(ordenes_entregadas) > 0:
                     mediana = ordenes_entregadas['DIAS_PRODUCCION'].median()
@@ -284,10 +293,11 @@ if sheet_url:
             # ==== TABLAS DETALLADAS ====
             st.header("📋 Detalle de Órdenes")
             
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "🏭 En Producción", 
                 "📦 En Logística", 
                 "✅ Recibidos",
+                "🚚 Despachados",
                 "🔍 Buscar Orden"
             ])
             
@@ -301,10 +311,14 @@ if sheet_url:
                 )
             
             with tab2:
-                logistica = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA']
+                logistica = df_ultimo_mes[
+                    (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') &
+                    (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
+                ]
                 st.dataframe(
                     logistica[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS LOGISTICA', 'DIAS_PRODUCCION']],
+                            'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 
+                            'ESTATUS LOGISTICA', 'LOGISTICA', 'DIAS_PRODUCCION']],  # Añadido 'LOGISTICA'
                     hide_index=True,
                     use_container_width=True
                 )
@@ -317,8 +331,18 @@ if sheet_url:
                     hide_index=True,
                     use_container_width=True
                 )
-            
+
             with tab4:
+                despachados = df_ultimo_mes[df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO'])]
+                st.dataframe(
+                    despachados[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                            'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 
+                            'LOGISTICA', 'DIAS_PRODUCCION']],
+                    hide_index=True,
+                    use_container_width=True
+                )
+            
+            with tab5:
                 buscar = st.text_input("Buscar por número de orden o código EKM")
                 if buscar:
                     resultado = df_ultimo_mes[
