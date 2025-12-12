@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import numpy as np
 
 # Logo en la esquina superior
 top_col1, top_col2 = st.columns([0.7,0.3])
@@ -82,6 +83,21 @@ def cargar_estatus(sheet_url):
     except Exception as e:
         st.error(f"Error al cargar estatus: {str(e)}")
         return None
+    
+def dias_habiles_colombia(fecha_inicio, dias_habiles):
+    """
+    Calcula la fecha después de X días hábiles en Colombia (excluyendo sábados y domingos)
+    """
+    fecha_actual = fecha_inicio
+    dias_agregados = 0
+    
+    while dias_agregados < dias_habiles:
+        fecha_actual += timedelta(days=1)
+        # Si no es sábado (5) ni domingo (6)
+        if fecha_actual.weekday() < 5:
+            dias_agregados += 1
+    
+    return fecha_actual
 
 # Título principal
 st.title("Control de Producción y Logística - Ekonomodo")
@@ -129,10 +145,8 @@ if sheet_url:
             
             col1, col2, col3 = st.columns(3)
             
-            # Alerta: Próximos a vencer en 2 días
-            fecha_limite = fecha_actual + timedelta(days=2)
-            # Alerta: Próximos a vencer en 2 días
-            fecha_limite = fecha_actual + timedelta(days=2)
+            # Alerta: Próximos a vencer en 2 días hábiles
+            fecha_limite = dias_habiles_colombia(fecha_actual, 2)
             proximos_vencer = df_ultimo_mes[
                 (df_ultimo_mes['FECHA DE VENCIMIENTO'] <= fecha_limite) & 
                 (df_ultimo_mes['FECHA DE VENCIMIENTO'] >= fecha_actual) &
@@ -141,7 +155,7 @@ if sheet_url:
             
             with col1:
                 if len(proximos_vencer) > 0:
-                    st.error(f"⚠️ {len(proximos_vencer)} órdenes vencen en 2 días")
+                    st.error(f"⚠️ {len(proximos_vencer)} órdenes vencen en 2 días hábiles")
                     with st.expander("Ver detalles"):
                         st.dataframe(
                             proximos_vencer[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
