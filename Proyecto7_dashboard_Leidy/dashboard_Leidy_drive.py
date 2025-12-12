@@ -525,9 +525,13 @@ if SHEET_URL:
         with tab8:
             st.subheader("💵 Análisis de Ventas")
             
-            if "COSTO TOTAL ANTES DE IVA" in df.columns and "SKU EKM" in df.columns:
-                # Excluir fletes de las ventas
-                df_ventas = df[~df["SKU EKM"].astype(str).str.upper().str.contains("EKMFLETE", na=False)].copy()
+            if "COSTO TOTAL ANTES DE IVA" in df.columns and "SKU EKM" in df.columns and "# FACTURA" in df.columns:
+                # Excluir fletes Y filtrar solo pedidos facturados
+                df_ventas = df[
+                    (~df["SKU EKM"].astype(str).str.upper().str.contains("EKMFLETE", na=False)) &
+                    (df["# FACTURA"].notna()) &
+                    (df["# FACTURA"] > 0)
+                ].copy()
                 
                 if len(df_ventas) > 0:
                     # Convertir a numérico
