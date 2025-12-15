@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday
+from pandas.tseries.offsets import CustomBusinessDay
 
 # Logo en la esquina superior
 top_col1, top_col2 = st.columns([0.7,0.3])
@@ -84,20 +86,80 @@ def cargar_estatus(sheet_url):
         st.error(f"Error al cargar estatus: {str(e)}")
         return None
     
-def dias_habiles_colombia(fecha_inicio, dias_habiles):
+def dias_habiles_colombia(fecha_inicio, dias_habiles_objetivo):
     """
-    Calcula la fecha después de X días hábiles en Colombia (excluyendo sábados y domingos)
+    Calcula la fecha después de X días hábiles en Colombia (excluyendo fines de semana y festivos)
     """
-    fecha_actual = fecha_inicio
-    dias_agregados = 0
+    cal = ColombiaHolidayCalendar()
+    fecha_actual = pd.Timestamp(fecha_inicio)
+    dias_contados = 0
     
-    while dias_agregados < dias_habiles:
+    while dias_contados < dias_habiles_objetivo:
         fecha_actual += timedelta(days=1)
-        # Si no es sábado (5) ni domingo (6)
-        if fecha_actual.weekday() < 5:
-            dias_agregados += 1
+        # Si es día hábil (no fin de semana ni festivo)
+        if fecha_actual.weekday() < 5 and fecha_actual not in cal.holidays():
+            dias_contados += 1
     
     return fecha_actual
+
+class ColombiaHolidayCalendar(AbstractHolidayCalendar):
+    """Calendario de festivos de Colombia"""
+    rules = [
+        # Festivos fijos
+        Holiday('Año Nuevo', month=1, day=1),
+        Holiday('Día del Trabajo', month=5, day=1),
+        Holiday('Día de la Independencia', month=7, day=20),
+        Holiday('Batalla de Boyacá', month=8, day=7),
+        Holiday('Inmaculada Concepción', month=12, day=8),
+        Holiday('Navidad', month=12, day=25),
+        
+        # Festivos 2024
+        Holiday('Reyes Magos 2024', month=1, day=8, year=2024),
+        Holiday('San José 2024', month=3, day=25, year=2024),
+        Holiday('Jueves Santo 2024', month=3, day=28, year=2024),
+        Holiday('Viernes Santo 2024', month=3, day=29, year=2024),
+        Holiday('Ascensión 2024', month=5, day=13, year=2024),
+        Holiday('Corpus Christi 2024', month=6, day=3, year=2024),
+        Holiday('Sagrado Corazón 2024', month=6, day=10, year=2024),
+        Holiday('San Pedro y San Pablo 2024', month=7, day=1, year=2024),
+        Holiday('Asunción 2024', month=8, day=19, year=2024),
+        Holiday('Día de la Raza 2024', month=10, day=14, year=2024),
+        Holiday('Todos los Santos 2024', month=11, day=4, year=2024),
+        Holiday('Independencia de Cartagena 2024', month=11, day=11, year=2024),
+        
+        # Festivos 2025
+        Holiday('Reyes Magos 2025', month=1, day=6, year=2025),
+        Holiday('San José 2025', month=3, day=24, year=2025),
+        Holiday('Jueves Santo 2025', month=4, day=17, year=2025),
+        Holiday('Viernes Santo 2025', month=4, day=18, year=2025),
+        Holiday('Ascensión 2025', month=6, day=2, year=2025),
+        Holiday('Corpus Christi 2025', month=6, day=23, year=2025),
+        Holiday('Sagrado Corazón 2025', month=6, day=30, year=2025),
+        Holiday('San Pedro y San Pablo 2025', month=6, day=30, year=2025),
+        Holiday('Asunción 2025', month=8, day=18, year=2025),
+        Holiday('Día de la Raza 2025', month=10, day=13, year=2025),
+        Holiday('Todos los Santos 2025', month=11, day=3, year=2025),
+        Holiday('Independencia de Cartagena 2025', month=11, day=17, year=2025),
+    ]
+
+def calcular_dias_habiles(fecha_inicio, fecha_fin):
+    """
+    Calcula días hábiles entre dos fechas excluyendo fines de semana y festivos colombianos
+    """
+    if pd.isna(fecha_inicio) or pd.isna(fecha_fin):
+        return None
+    
+    # Crear calendario colombiano
+    cal = ColombiaHolidayCalendar()
+    
+    # Crear rango de días hábiles
+    dias_habiles = pd.bdate_range(
+        start=fecha_inicio,
+        end=fecha_fin,
+        freq=CustomBusinessDay(calendar=cal)
+    )
+    
+    return len(dias_habiles)
 
 # Título principal
 st.title("Control de Producción y Logística - Ekonomodo")
@@ -132,13 +194,17 @@ if sheet_url:
                     how='left'
                 )
                 
-                # Calcular días de producción (solo para órdenes con fecha de entrega)
-                df_ultimo_mes['DIAS_PRODUCCION'] = None
-                mask = df_ultimo_mes['FECHA_ENTREGA'].notna() & df_ultimo_mes['FECHA DE VENTA'].notna()
-                df_ultimo_mes.loc[mask, 'DIAS_PRODUCCION'] = (
-                    df_ultimo_mes.loc[mask, 'FECHA_ENTREGA'] - 
-                    df_ultimo_mes.loc[mask, 'FECHA DE VENTA']
-                ).dt.days
+            # Calcular días de producción en días hábiles (solo para órdenes con fecha de entrega)
+            df_ultimo_mes['DIAS_PRODUCCION'] = None
+            mask = df_ultimo_mes['FECHA_ENTREGA'].notna() & df_ultimo_mes['FECHA DE VENTA'].notna()
+
+            # Calcular días hábiles para cada orden
+            for idx in df_ultimo_mes[mask].index:
+                dias = calcular_dias_habiles(
+                    df_ultimo_mes.loc[idx, 'FECHA DE VENTA'],
+                    df_ultimo_mes.loc[idx, 'FECHA_ENTREGA']
+                )
+                df_ultimo_mes.loc[idx, 'DIAS_PRODUCCION'] = dias
             
             # ==== ALERTAS PRINCIPALES ====
             st.header("🚨 Alertas Importantes")
@@ -227,11 +293,33 @@ if sheet_url:
                 if len(vencidas) > 0:
                     st.error(f"🔴 {len(vencidas)} órdenes VENCIDAS")
                     with st.expander("Ver detalles"):
-                        st.dataframe(
-                            vencidas[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
-                                    'FECHA DE VENCIMIENTO', 'ESTATUS', 'DIAS_PRODUCCION']],
-                            hide_index=True
+                        # Calcular días de tardanza en días hábiles para las vencidas
+                        vencidas_display = vencidas.copy()
+                        vencidas_display['DIAS_TARDANZA'] = vencidas_display.apply(
+                            lambda row: calcular_dias_habiles(row['FECHA DE VENTA'], fecha_actual),
+                            axis=1
                         )
+                        
+                        # Crear función para colorear las celdas
+                        def colorear_tardanza(val):
+                            if pd.isna(val):
+                                return ''
+                            if val <= 7:
+                                return 'background-color: #90EE90'  # Verde claro
+                            elif val <= 14:
+                                return 'background-color: #FFD700'  # Amarillo
+                            elif val <= 21:
+                                return 'background-color: #FFA500'  # Naranja
+                            else:
+                                return 'background-color: #FF6B6B'  # Rojo claro
+                        
+                        # Mostrar dataframe con estilo
+                        styled_df = vencidas_display[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                                'FECHA DE VENCIMIENTO', 'ESTATUS', 'DIAS_TARDANZA']].style.map(
+                                    colorear_tardanza, subset=['DIAS_TARDANZA']
+                                )
+                        
+                        st.dataframe(styled_df, hide_index=True, use_container_width=True)
                 else:
                     st.success("✅ No hay órdenes vencidas")
             
