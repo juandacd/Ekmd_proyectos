@@ -77,7 +77,7 @@ def cargar_estatus(sheet_url):
         df_estatus['ORDEN'] = df_estatus['ORDEN'].fillna(0).astype(float).astype(int).astype(str)
         
         # Convertir fecha de entrega a datetime (pandas lo detectará automáticamente)
-        df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'], errors='coerce')
+        df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'], format='mixed', dayfirst=True, errors='coerce')
         
         return df_estatus
     except Exception as e:
@@ -274,115 +274,406 @@ if sheet_url:
                     st.metric("Mediana Días", "N/A")
             
             st.divider()
+
+        # ==== ESTADÍSTICA Y ANALÍTICA ====
+        st.header("📈 Estadística y Analítica")
+
+        # Filtrar datos de los últimos 30 días para análisis diario
+        df_analisis = df_ultimo_mes.copy()
+
+        # Preparar datos para análisis temporal
+        tab_stat1, tab_stat2, tab_stat3, tab_stat4 = st.tabs([
+            "📊 Flujo Diario",
+            "🔥 Productos Populares", 
+            "⚡ Velocidad de Producción",
+            "📉 Tendencias"
+        ])
+
+        with tab_stat1:
+            st.subheader("Flujo de Órdenes Diario")
             
-            # ==== VISUALIZACIONES ====
             col1, col2 = st.columns(2)
             
             with col1:
-                st.subheader("Estado de Órdenes")
-                estatus_counts = df_ultimo_mes['ESTATUS'].value_counts()
-                fig = px.pie(
-                    values=estatus_counts.values,
-                    names=estatus_counts.index,
-                    title="Distribución por Estatus",
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # Órdenes que pasaron por PRODUCCION (incluyendo las ya ENTREGADAS)
+                st.markdown("**Entradas a Producción por día**")
+                entradas_prod = df_analisis[df_analisis['ESTATUS'].isin(['PRODUCCION', 'ENTREGADO'])]
+                entradas_prod_dia = entradas_prod.groupby(entradas_prod['FECHA DE VENTA'].dt.date).size().reset_index()
+                entradas_prod_dia.columns = ['Fecha', 'Cantidad']
+                
+                if len(entradas_prod_dia) > 0:
+                    fig = px.line(entradas_prod_dia, x='Fecha', y='Cantidad', 
+                                title='Órdenes entrando a Producción',
+                                markers=True)
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.metric("Promedio diario", f"{entradas_prod_dia['Cantidad'].mean():.1f} órdenes")
+                else:
+                    st.info("No hay datos suficientes")
             
             with col2:
-                st.subheader("Órdenes por Cuenta")
-                cuenta_counts = df_ultimo_mes['CUENTA'].value_counts().head(10)
-                fig = px.bar(
-                    x=cuenta_counts.index,
-                    y=cuenta_counts.values,
-                    title="Top 10 Cuentas",
-                    labels={'x': 'Cuenta', 'y': 'Cantidad de Órdenes'},
-                    color=cuenta_counts.values,
-                    color_continuous_scale='Blues'
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # Órdenes entrando a LOGISTICA por día
+                st.markdown("**Entradas a Logística por día**")
+                entradas_log = df_analisis[df_analisis['ESTATUS'].isin(['LOGISTICA', 'ENTREGADO'])]
+                entradas_log_dia = entradas_log.groupby(entradas_log['FECHA DE VENTA'].dt.date).size().reset_index()
+                entradas_log_dia.columns = ['Fecha', 'Cantidad']
+                
+                if len(entradas_log_dia) > 0:
+                    fig = px.line(entradas_log_dia, x='Fecha', y='Cantidad',
+                                title='Órdenes entrando a Logística',
+                                markers=True, color_discrete_sequence=['orange'])
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.metric("Promedio diario", f"{entradas_log_dia['Cantidad'].mean():.1f} órdenes")
+                else:
+                    st.info("No hay datos suficientes")
             
             st.divider()
             
-            # ==== TABLAS DETALLADAS ====
-            st.header("📋 Detalle de Órdenes")
+            # Tasa de entrada vs salida en Producción
+            st.markdown("**⚖️ Tasa de Entrada vs Salida en Producción**")
+            col1, col2, col3 = st.columns(3)
             
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "🏭 En Producción", 
-                "📦 En Logística", 
-                "✅ Recibidos",
-                "🚚 Despachados",
-                "🔍 Buscar Orden"
-            ])
+            # Órdenes entregadas por día
+            entregadas = df_analisis[df_analisis['FECHA_ENTREGA'].notna()]
+            if len(entregadas) > 0:
+                entregadas_dia = entregadas.groupby(entregadas['FECHA_ENTREGA'].dt.date).size()
+                promedio_salida = entregadas_dia.mean()
+            else:
+                promedio_salida = 0
             
-            with tab1:
-                produccion = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'PRODUCCION']
-                st.dataframe(
-                    produccion[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                              'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'DIAS_PRODUCCION']],
-                    hide_index=True,
-                    use_container_width=True
-                )
+            promedio_entrada = entradas_prod_dia['Cantidad'].mean() if len(entradas_prod_dia) > 0 else 0
+            diferencia = promedio_entrada - promedio_salida
             
-            with tab2:
-                logistica = df_ultimo_mes[
-                    (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') &
-                    (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
-                ]
-                st.dataframe(
-                    logistica[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                            'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 
-                            'ESTATUS LOGISTICA', 'LOGISTICA', 'DIAS_PRODUCCION']],  # Añadido 'LOGISTICA'
-                    hide_index=True,
-                    use_container_width=True
-                )
+            with col1:
+                st.metric("Entrada diaria promedio", f"{promedio_entrada:.1f} órdenes")
             
-            with tab3:
-                recibidos = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'RECIBIDO']
-                st.dataframe(
-                    recibidos[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                             'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'DIAS_PRODUCCION']],
-                    hide_index=True,
-                    use_container_width=True
-                )
+            with col2:
+                st.metric("Salida diaria promedio", f"{promedio_salida:.1f} órdenes")
+            
+            with col3:
+                st.metric("Diferencia", f"{diferencia:+.1f} órdenes", 
+                        delta_color="inverse" if diferencia > 0 else "normal")
+            
+            if len(entregadas) > 0:
+                # Gráfico comparativo
+                comparacion = pd.DataFrame({
+                    'Fecha': list(entradas_prod_dia['Fecha']) + list(entregadas_dia.index),
+                    'Cantidad': list(entradas_prod_dia['Cantidad']) + list(entregadas_dia.values),
+                    'Tipo': ['Entrada']*len(entradas_prod_dia) + ['Salida']*len(entregadas_dia)
+                })
+                
+                fig = px.line(comparacion, x='Fecha', y='Cantidad', color='Tipo',
+                            title='Comparación Entrada vs Salida en Producción',
+                            markers=True)
+                st.plotly_chart(fig, use_container_width=True)
 
-            with tab4:
-                despachados = df_ultimo_mes[df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO'])]
-                st.dataframe(
-                    despachados[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
-                            'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 
-                            'LOGISTICA', 'DIAS_PRODUCCION']],
-                    hide_index=True,
-                    use_container_width=True
-                )
+        # Tabla detallada de flujo diario
+            st.divider()
+            st.markdown("**📊 Tabla de Flujo Diario**")
             
-            with tab5:
-                buscar = st.text_input("Buscar por número de orden o código EKM")
-                if buscar:
-                    resultado = df_ultimo_mes[
-                        (df_ultimo_mes['ORDEN'].astype(str).str.contains(buscar, case=False, na=False)) |
-                        (df_ultimo_mes['EKM'].astype(str).str.contains(buscar, case=False, na=False))
-                    ]
-                    if len(resultado) > 0:
-                        st.dataframe(
-                            resultado[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'FECHA DE VENCIMIENTO',
-                                     'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS', 
-                                     'ESTATUS LOGISTICA', 'DIAS_PRODUCCION']],
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.warning("No se encontraron resultados")
+            # Crear tabla combinada
+            if len(entradas_prod_dia) > 0 or len(entregadas) > 0:
+                tabla_flujo = entradas_prod_dia.copy()
+                tabla_flujo = tabla_flujo.rename(columns={'Cantidad': 'Entradas'})
+                
+                if len(entregadas) > 0:
+                    salidas_df = entregadas_dia.reset_index()
+                    salidas_df.columns = ['Fecha', 'Salidas']
+                    tabla_flujo = tabla_flujo.merge(salidas_df, on='Fecha', how='outer')
+                else:
+                    tabla_flujo['Salidas'] = 0
+                
+                tabla_flujo = tabla_flujo.fillna(0)
+                tabla_flujo['Diferencia'] = tabla_flujo['Entradas'] - tabla_flujo['Salidas']
+                tabla_flujo = tabla_flujo.sort_values('Fecha', ascending=False)
+                
+                # Convertir a enteros
+                tabla_flujo['Entradas'] = tabla_flujo['Entradas'].astype(int)
+                tabla_flujo['Salidas'] = tabla_flujo['Salidas'].astype(int)
+                tabla_flujo['Diferencia'] = tabla_flujo['Diferencia'].astype(int)
+                
+                st.dataframe(tabla_flujo, hide_index=True, use_container_width=True)           
+
+        with tab_stat2:
+            st.subheader("Productos Más Populares")
             
-            # Botón de actualización
-            st.sidebar.divider()
-            if st.sidebar.button("🔄 Actualizar datos"):
-                st.cache_data.clear()
-                st.rerun()
+            col1, col2 = st.columns(2)
             
-            # Información de última actualización
-            st.sidebar.info(f"📅 Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            with col1:
+                st.markdown("**🏭 Top 10 en Producción**")
+                prod_data = df_analisis[df_analisis['ESTATUS'].isin(['PRODUCCION', 'ENTREGADO'])].groupby('EKM').agg({
+                    'ORDEN': 'count',
+                    'DESCRIPCION PLATAFORMA': 'first'
+                }).reset_index()
+                prod_data.columns = ['EKM', 'Cantidad', 'Descripción']
+                prod_data = prod_data.sort_values('Cantidad', ascending=False).head(10)
+                
+                if len(prod_data) > 0:
+                    # Crear etiqueta combinada
+                    prod_data['Label'] = prod_data['EKM'] + ' - ' + prod_data['Descripción'].str[:30]
+                    
+                    fig = px.bar(prod_data, x='Cantidad', y='Label', 
+                                orientation='h',
+                                labels={'Cantidad': 'Cantidad de Órdenes', 'Label': ''},
+                                title='Productos más frecuentes en Producción',
+                                color='Cantidad',
+                                color_continuous_scale='Reds',
+                                hover_data={'EKM': True, 'Descripción': True})
+                    fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Tabla detallada
+                    st.dataframe(prod_data[['EKM', 'Descripción', 'Cantidad']], hide_index=True, use_container_width=True)
+                else:
+                    st.info("No hay órdenes en producción")
             
+            with col2:
+                st.markdown("**📦 Top 10 en Logística**")
+                log_data = df_analisis[df_analisis['ESTATUS'] == 'LOGISTICA'].groupby('EKM').agg({
+                    'ORDEN': 'count',
+                    'DESCRIPCION PLATAFORMA': 'first'
+                }).reset_index()
+                log_data.columns = ['EKM', 'Cantidad', 'Descripción']
+                log_data = log_data.sort_values('Cantidad', ascending=False).head(10)
+                
+                if len(log_data) > 0:
+                    # Crear etiqueta combinada
+                    log_data['Label'] = log_data['EKM'] + ' - ' + log_data['Descripción'].str[:30]
+                    
+                    fig = px.bar(log_data, x='Cantidad', y='Label',
+                                orientation='h',
+                                labels={'Cantidad': 'Cantidad de Órdenes', 'Label': ''},
+                                title='Productos más frecuentes en Logística',
+                                color='Cantidad',
+                                color_continuous_scale='Blues',
+                                hover_data={'EKM': True, 'Descripción': True})
+                    fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Tabla detallada
+                    st.dataframe(log_data[['EKM', 'Descripción', 'Cantidad']], hide_index=True, use_container_width=True)
+                else:
+                    st.info("No hay órdenes en logística")
+
+        with tab_stat3:
+            st.subheader("Velocidad de Producción por Producto")
+            
+            # Calcular mediana de días de producción por EKM (PRODUCCION + ENTREGADO)
+            ordenes_con_tiempo = df_analisis[
+                (df_analisis['ESTATUS'].isin(['PRODUCCION', 'ENTREGADO'])) &
+                (df_analisis['DIAS_PRODUCCION'].notna())
+            ].copy()
+            
+            if len(ordenes_con_tiempo) > 0:
+                velocidad_por_ekm = ordenes_con_tiempo.groupby('EKM').agg({
+                    'DIAS_PRODUCCION': [('mediana', 'median'), ('promedio', 'mean'), ('cantidad', 'count')],
+                    'DESCRIPCION PLATAFORMA': 'first'
+                }).reset_index()
+
+                # Aplanar columnas
+                velocidad_por_ekm.columns = ['EKM', 'mediana', 'promedio', 'cantidad', 'Descripción']
+
+                # AGREGAR ESTA LÍNEA:
+                velocidad_por_ekm['mediana'] = pd.to_numeric(velocidad_por_ekm['mediana'], errors='coerce')
+                velocidad_por_ekm['promedio'] = pd.to_numeric(velocidad_por_ekm['promedio'], errors='coerce')
+
+                # Filtrar productos con al menos 3 órdenes completadas
+                velocidad_por_ekm = velocidad_por_ekm[velocidad_por_ekm['cantidad'] >= 3]
+                    
+                # Filtrar productos con al menos 3 órdenes completadas
+                velocidad_por_ekm = velocidad_por_ekm[velocidad_por_ekm['cantidad'] >= 3]
+                
+                if len(velocidad_por_ekm) > 0:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**⚡ Top 10 Más Rápidos**")
+                        mas_rapidos = velocidad_por_ekm.sort_values('mediana').head(10)
+                        mas_rapidos['Label'] = mas_rapidos['EKM'] + ' - ' + mas_rapidos['Descripción'].str[:25]
+                        
+                        fig = px.bar(mas_rapidos, x='mediana', y='Label',
+                                    orientation='h',
+                                    labels={'mediana': 'Días (mediana)', 'Label': ''},
+                                    title='Productos con menor tiempo de producción',
+                                    color='mediana',
+                                    color_continuous_scale='Greens_r',
+                                    hover_data={'cantidad': True, 'promedio': ':.1f'})
+                        fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        st.markdown("**🐌 Top 10 Más Lentos**")
+                        mas_lentos = velocidad_por_ekm.sort_values('mediana', ascending=False).head(10)
+                        mas_lentos['Label'] = mas_lentos['EKM'] + ' - ' + mas_lentos['Descripción'].str[:25]
+                        
+                        fig = px.bar(mas_lentos, x='mediana', y='Label',
+                                    orientation='h',
+                                    labels={'mediana': 'Días (mediana)', 'Label': ''},
+                                    title='Productos con mayor tiempo de producción',
+                                    color='mediana',
+                                    color_continuous_scale='Reds',
+                                    hover_data={'cantidad': True, 'promedio': ':.1f'})
+                        fig.update_layout(yaxis={'categoryorder':'total descending'})
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Tabla detallada
+                    st.divider()
+                    st.markdown("**📊 Tabla Completa de Tiempos de Producción**")
+                    velocidad_display = velocidad_por_ekm.sort_values('mediana')
+                    velocidad_display['mediana'] = velocidad_display['mediana'].round(1)
+                    velocidad_display['promedio'] = velocidad_display['promedio'].round(1)
+                    st.dataframe(velocidad_display, hide_index=True, use_container_width=True)
+                else:
+                    st.info("No hay suficientes datos. Se necesitan al menos 3 órdenes completadas por producto.")
+            else:
+                st.info("No hay órdenes con tiempo de producción calculado aún.")
+
+        with tab_stat4:
+            st.subheader("Tendencias Generales")
+            
+            # Distribución de días de producción
+            if len(ordenes_con_tiempo) > 0:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig = px.histogram(ordenes_con_tiempo, x='DIAS_PRODUCCION',
+                                    title='Distribución de Días de Producción',
+                                    labels={'DIAS_PRODUCCION': 'Días de Producción'},
+                                    nbins=30,
+                                    color_discrete_sequence=['#636EFA'])
+                    fig.add_vline(x=ordenes_con_tiempo['DIAS_PRODUCCION'].median(), 
+                                line_dash="dash", line_color="red",
+                                annotation_text=f"Mediana: {ordenes_con_tiempo['DIAS_PRODUCCION'].median():.1f} días")
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    fig = px.box(ordenes_con_tiempo, y='DIAS_PRODUCCION',
+                                title='Distribución de Tiempos (Box Plot)',
+                                labels={'DIAS_PRODUCCION': 'Días de Producción'})
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Métricas de resumen
+                st.divider()
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Mínimo", f"{ordenes_con_tiempo['DIAS_PRODUCCION'].min():.0f} días")
+                with col2:
+                    st.metric("Percentil 25", f"{ordenes_con_tiempo['DIAS_PRODUCCION'].quantile(0.25):.1f} días")
+                with col3:
+                    st.metric("Percentil 75", f"{ordenes_con_tiempo['DIAS_PRODUCCION'].quantile(0.75):.1f} días")
+                with col4:
+                    st.metric("Máximo", f"{ordenes_con_tiempo['DIAS_PRODUCCION'].max():.0f} días")
+            
+        # ==== VISUALIZACIONES ====
+        st.header("📊 Visualizaciones Generales")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Estado de Órdenes")
+            estatus_counts = df_ultimo_mes['ESTATUS'].value_counts()
+            fig = px.pie(
+                values=estatus_counts.values,
+                names=estatus_counts.index,
+                title="Distribución por Estatus",
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("Órdenes por Cuenta")
+            cuenta_counts = df_ultimo_mes['CUENTA'].value_counts().head(10)
+            fig = px.bar(
+                x=cuenta_counts.index,
+                y=cuenta_counts.values,
+                title="Top 10 Cuentas",
+                labels={'x': 'Cuenta', 'y': 'Cantidad de Órdenes'},
+                color=cuenta_counts.values,
+                color_continuous_scale='Blues'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        st.divider()
+        
+        # ==== TABLAS DETALLADAS ====
+        st.header("📋 Detalle de Órdenes")
+        
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "🏭 En Producción", 
+            "📦 En Logística", 
+            "✅ Recibidos",
+            "🚚 Despachados",
+            "🔍 Buscar Orden"
+        ])
+        
+        with tab1:
+            produccion = df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'PRODUCCION']
+            st.dataframe(
+                produccion[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                          'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'DIAS_PRODUCCION']],
+                hide_index=True,
+                use_container_width=True
+            )
+        
+        with tab2:
+            logistica = df_ultimo_mes[
+                (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') &
+                (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
+            ]
+            st.dataframe(
+                logistica[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                        'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 
+                        'ESTATUS LOGISTICA', 'LOGISTICA', 'DIAS_PRODUCCION']],
+                hide_index=True,
+                use_container_width=True
+            )
+        
+        with tab3:
+            recibidos = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'RECIBIDO']
+            st.dataframe(
+                recibidos[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                         'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'DIAS_PRODUCCION']],
+                hide_index=True,
+                use_container_width=True
+            )
+
+        with tab4:
+            despachados = df_ultimo_mes[df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO'])]
+            st.dataframe(
+                despachados[['ORDEN', 'CUENTA', 'FECHA DE VENCIMIENTO', 
+                        'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 
+                        'LOGISTICA', 'DIAS_PRODUCCION']],
+                hide_index=True,
+                use_container_width=True
+            )
+        
+        with tab5:
+            buscar = st.text_input("Buscar por número de orden o código EKM")
+            if buscar:
+                resultado = df_ultimo_mes[
+                    (df_ultimo_mes['ORDEN'].astype(str).str.contains(buscar, case=False, na=False)) |
+                    (df_ultimo_mes['EKM'].astype(str).str.contains(buscar, case=False, na=False))
+                ]
+                if len(resultado) > 0:
+                    st.dataframe(
+                        resultado[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'FECHA DE VENCIMIENTO',
+                                 'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM', 'ESTATUS', 
+                                 'ESTATUS LOGISTICA', 'DIAS_PRODUCCION']],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("No se encontraron resultados")
+        
+        # Botón de actualización
+        st.sidebar.divider()
+        if st.sidebar.button("🔄 Actualizar datos"):
+            st.cache_data.clear()
+            st.rerun()
+        
+        # Información de última actualización
+        st.sidebar.info(f"📅 Última actualización: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+        
     except Exception as e:
         st.error(f"Error: {str(e)}")
         st.info("👆 Asegúrate de configurar correctamente las credenciales de Google Cloud")
