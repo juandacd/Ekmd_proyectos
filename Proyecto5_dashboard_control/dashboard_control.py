@@ -215,162 +215,132 @@ if sheet_url:
                 )
                 df_ultimo_mes.loc[idx, 'DIAS_PRODUCCION'] = dias
             
-            # ==== ALERTAS PRINCIPALES ====
-            st.header("🚨 Alertas Importantes")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            # Alerta: Próximos a vencer en 2 días hábiles
-            fecha_limite = dias_habiles_colombia(fecha_actual, 2)
-            proximos_vencer = df_ultimo_mes[
-                (df_ultimo_mes['FECHA DE VENCIMIENTO'] <= fecha_limite) & 
-                (df_ultimo_mes['FECHA DE VENCIMIENTO'] >= fecha_actual) &
-                (df_ultimo_mes['ESTATUS'] == 'PRODUCCION')
-            ]
-            
-            with col1:
-                if len(proximos_vencer) > 0:
-                    st.error(f"⚠️ {len(proximos_vencer)} órdenes vencen en 2 días hábiles")
-                    with st.expander("Ver detalles"):
-                        st.dataframe(
-                            proximos_vencer[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
-                                           'FECHA DE VENCIMIENTO', 'ESTATUS']],
-                            hide_index=True
-                        )
-                else:
-                    st.success("✅ No hay órdenes próximas a vencer")
-            
-            # Alerta: Devoluciones
-            devoluciones = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'DEVOLUCION']
-            
-            with col2:
-                if len(devoluciones) > 0:
-                    st.error(f"🔄 {len(devoluciones)} devoluciones pendientes")
-                    with st.expander("Ver detalles"):
-                        st.dataframe(
-                            devoluciones[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'EKM']],
-                            hide_index=True
-                        )
-                else:
-                    st.success("✅ No hay devoluciones")
+        # ==== ALERTAS PRINCIPALES ====
+        st.header("🚨 Alertas Importantes")
 
-            # Alerta: Pendientes de despacho en logística
-            pendientes_despacho = df_ultimo_mes[
-                (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') & 
-                (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
-            ]
+        # Primera fila de alertas
+        col1, col2, col3 = st.columns(3)
 
-            with col3:  # o col4 si añades una columna más
-                if len(pendientes_despacho) > 0:
-                    st.warning(f"📦 {len(pendientes_despacho)} órdenes pendientes de despachar")
-                    with st.expander("Ver detalles"):
-                        st.dataframe(
-                            pendientes_despacho[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
-                                                'CANTIDAD', 'LOGISTICA']],
-                            hide_index=True
-                        )
-                else:
-                    st.success("✅ Todo despachado")
+        # 1. ALERTA: Órdenes vencidas
+        vencidas = df_ultimo_mes[
+            (df_ultimo_mes['FECHA DE VENCIMIENTO'] < fecha_actual) &
+            (df_ultimo_mes['ESTATUS'] == 'PRODUCCION')
+        ]
 
-            # Alerta: Órdenes vencidas
-            vencidas = df_ultimo_mes[
-                (df_ultimo_mes['FECHA DE VENCIMIENTO'] < fecha_actual) &
-                (df_ultimo_mes['ESTATUS'] == 'PRODUCCION')
-            ]
+        with col1:
+            if len(vencidas) > 0:
+                st.error(f"🔴 {len(vencidas)} órdenes de producción VENCIDAS")
+                with st.expander("Ver detalles"):
+                    # Calcular días de tardanza en días hábiles para las vencidas
+                    vencidas_display = vencidas.copy()
+                    vencidas_display['DIAS_TARDANZA'] = vencidas_display.apply(
+                        lambda row: calcular_dias_habiles(row['FECHA DE VENTA'], fecha_actual),
+                        axis=1
+                    )
+                    
+                    # Crear función para colorear las celdas
+                    def colorear_tardanza(val):
+                        if pd.isna(val):
+                            return ''
+                        if val <= 7:
+                            return 'background-color: #90EE90'  # Verde claro
+                        elif val <= 14:
+                            return 'background-color: #FFD700'  # Amarillo
+                        elif val <= 21:
+                            return 'background-color: #FFA500'  # Naranja
+                        else:
+                            return 'background-color: #FF6B6B'  # Rojo claro
+                    
+                    # Mostrar dataframe con estilo
+                    styled_df = vencidas_display[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                            'FECHA DE VENCIMIENTO', 'ESTATUS', 'DIAS_TARDANZA']].style.map(
+                                colorear_tardanza, subset=['DIAS_TARDANZA']
+                            )
+                    
+                    st.dataframe(styled_df, hide_index=True, use_container_width=True)
+            else:
+                st.success("✅ No hay órdenes vencidas")
 
-            # Nueva fila de alertas
-            col4, col5, col6 = st.columns(3)
+        # 2. ALERTA: Próximos a vencer en 2 días hábiles
+        fecha_limite = dias_habiles_colombia(fecha_actual, 2)
+        proximos_vencer = df_ultimo_mes[
+            (df_ultimo_mes['FECHA DE VENCIMIENTO'] <= fecha_limite) & 
+            (df_ultimo_mes['FECHA DE VENCIMIENTO'] >= fecha_actual) &
+            (df_ultimo_mes['ESTATUS'] == 'PRODUCCION')
+        ]
 
-            # Alerta: Entregados pero no recibidos en logística
-            entregados_no_recibidos = df_ultimo_mes[
-                (df_ultimo_mes['ESTATUS'] == 'ENTREGADO') & 
-                (df_ultimo_mes['ESTATUS LOGISTICA'].isna() | (df_ultimo_mes['ESTATUS LOGISTICA'] == '') | (df_ultimo_mes['ESTATUS LOGISTICA'] == 'NAN'))
-            ]
+        with col2:
+            if len(proximos_vencer) > 0:
+                st.error(f"⚠️ {len(proximos_vencer)} órdenes de producción vencen en 2 días hábiles")
+                with st.expander("Ver detalles"):
+                    st.dataframe(
+                        proximos_vencer[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                                    'FECHA DE VENCIMIENTO', 'ESTATUS']],
+                        hide_index=True
+                    )
+            else:
+                st.success("✅ No hay órdenes próximas a vencer")
 
-            with col4:
-                if len(entregados_no_recibidos) > 0:
-                    st.warning(f"⚠️ {len(entregados_no_recibidos)} entregados sin recibir en logística")
-                    with st.expander("Ver detalles"):
-                        st.dataframe(
-                            entregados_no_recibidos[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
-                            hide_index=True
-                        )
-                else:
-                    st.success("✅ Todos los entregados recibidos")
+        # 3. ALERTA: Devoluciones
+        devoluciones = df_ultimo_mes[df_ultimo_mes['ESTATUS LOGISTICA'] == 'DEVOLUCION']
 
-            with col5:
-                if len(vencidas) > 0:
-                    st.error(f"🔴 {len(vencidas)} órdenes VENCIDAS")
-                    with st.expander("Ver detalles"):
-                        # Calcular días de tardanza en días hábiles para las vencidas
-                        vencidas_display = vencidas.copy()
-                        vencidas_display['DIAS_TARDANZA'] = vencidas_display.apply(
-                            lambda row: calcular_dias_habiles(row['FECHA DE VENTA'], fecha_actual),
-                            axis=1
-                        )
-                        
-                        # Crear función para colorear las celdas
-                        def colorear_tardanza(val):
-                            if pd.isna(val):
-                                return ''
-                            if val <= 7:
-                                return 'background-color: #90EE90'  # Verde claro
-                            elif val <= 14:
-                                return 'background-color: #FFD700'  # Amarillo
-                            elif val <= 21:
-                                return 'background-color: #FFA500'  # Naranja
-                            else:
-                                return 'background-color: #FF6B6B'  # Rojo claro
-                        
-                        # Mostrar dataframe con estilo
-                        styled_df = vencidas_display[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
-                                'FECHA DE VENCIMIENTO', 'ESTATUS', 'DIAS_TARDANZA']].style.map(
-                                    colorear_tardanza, subset=['DIAS_TARDANZA']
-                                )
-                        
-                        st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                else:
-                    st.success("✅ No hay órdenes vencidas")
-            
-            st.divider()
-            
-            # ==== MÉTRICAS GENERALES ====
-            st.header("📊 Resumen del Último Mes")
-            
-            col1, col2, col3, col4, col5 = st.columns(5)
-            
-            with col1:
-                st.metric("Total Órdenes", len(df_ultimo_mes))
-            
-            with col2:
-                en_produccion_count = len(df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'PRODUCCION'])
-                st.metric("En Producción", en_produccion_count)
-            
-            with col3:
-                en_logistica_count = len(df_ultimo_mes[df_ultimo_mes['ESTATUS'] == 'LOGISTICA'])
-                st.metric("En Logística", en_logistica_count)
+        with col3:
+            if len(devoluciones) > 0:
+                st.error(f"🔄 {len(devoluciones)} devoluciones pendientes")
+                with st.expander("Ver detalles"):
+                    st.dataframe(
+                        devoluciones[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'EKM']],
+                        hide_index=True
+                    )
+            else:
+                st.success("✅ No hay devoluciones")
 
-            with col4:  # ajusta el número según tu layout
-                despachados_count = len(df_ultimo_mes[
-                    df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO'])
-                ])
-                st.metric("Despachados", despachados_count)
-            
-            with col5:
-                total_productos = df_ultimo_mes['CANTIDAD'].sum()
-                st.metric("Total Productos", int(total_productos))
+        # Segunda fila de alertas
+        col4, col5, col6 = st.columns(3)
 
-            with col6:
-                ordenes_entregadas = df_ultimo_mes[df_ultimo_mes['DIAS_PRODUCCION'].notna()]
-                if len(ordenes_entregadas) > 0:
-                    mediana = ordenes_entregadas['DIAS_PRODUCCION'].median()
-                    p75 = ordenes_entregadas['DIAS_PRODUCCION'].quantile(0.75)
-                    st.metric("Mediana Días", f"{mediana:.1f} días", 
-                            help=f"50% de órdenes ≤ {mediana:.1f} días | 75% ≤ {p75:.1f} días")
-                else:
-                    st.metric("Mediana Días", "N/A")
-            
-            st.divider()
+        # 4. ALERTA: Entregados pero no recibidos en logística
+        entregados_no_recibidos = df_ultimo_mes[
+            (df_ultimo_mes['ESTATUS'] == 'ENTREGADO') & 
+            (df_ultimo_mes['ESTATUS LOGISTICA'].isna() | (df_ultimo_mes['ESTATUS LOGISTICA'] == '') | (df_ultimo_mes['ESTATUS LOGISTICA'] == 'NAN'))
+        ]
+
+        with col4:
+            if len(entregados_no_recibidos) > 0:
+                st.warning(f"⚠️ {len(entregados_no_recibidos)} entregados sin recibir en logística")
+                with st.expander("Ver detalles"):
+                    st.dataframe(
+                        entregados_no_recibidos[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 'CANTIDAD', 'EKM']],
+                        hide_index=True
+                    )
+            else:
+                st.success("✅ Todos los entregados recibidos")
+
+        # 5. ALERTA: Pendientes de despacho en logística
+        pendientes_despacho = df_ultimo_mes[
+            (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') & 
+            (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
+        ]
+
+        with col5:
+            if len(pendientes_despacho) > 0:
+                st.warning(f"📦 {len(pendientes_despacho)} órdenes sin despachar")
+                with st.expander("Ver detalles"):
+                    st.dataframe(
+                        pendientes_despacho[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
+                                            'CANTIDAD', 'LOGISTICA']],
+                        hide_index=True
+                    )
+            else:
+                st.success("✅ Todo despachado")
+
+        # 6. ALERTA: Órdenes sin facturar (PENDIENTE - PRÓXIMA IMPLEMENTACIÓN)
+        with col6:
+            # TODO: Implementar lógica de órdenes sin facturar
+            # Placeholder por ahora
+            st.info("💰 Órdenes sin facturar")
+            st.caption("🚧 Funcionalidad en desarrollo")
+
+        st.divider()
 
         # ==== ESTADÍSTICA Y ANALÍTICA ====
         st.header("📈 Estadística y Analítica")
