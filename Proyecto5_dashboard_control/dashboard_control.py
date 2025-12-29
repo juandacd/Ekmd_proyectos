@@ -173,7 +173,7 @@ sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCx
 dias_historico = st.sidebar.selectbox(
     "📅 Rango de datos históricos",
     options=[30, 60, 90, 180, 365],
-    index=1,  # Por defecto 60 días
+    index=2,  # Por defecto 60 días
     format_func=lambda x: f"Últimos {x} días"
 )
 
