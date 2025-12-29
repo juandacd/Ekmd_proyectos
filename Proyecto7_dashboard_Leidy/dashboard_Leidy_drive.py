@@ -537,7 +537,6 @@ if SHEET_URL:
                     # Convertir a numérico
                     df_ventas["VENTA_NUMERICO"] = pd.to_numeric(df_ventas["COSTO TOTAL ANTES DE IVA"], errors='coerce')
                     
-                    # KPIs principales de ventas
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         total_ventas = df_ventas["VENTA_NUMERICO"].sum()

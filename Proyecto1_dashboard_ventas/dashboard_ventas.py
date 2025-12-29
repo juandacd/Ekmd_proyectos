@@ -57,6 +57,47 @@ MONTH_MAP = {
     7: "JUL", 8: "AGO", 9: "SEP", 10: "OCT", 11: "NOV", 12: "DIC"
 }
 
+# @st.cache_data(show_spinner=False)
+# def load_libro_ventas(file_obj, year_label):
+#     """Carga Libro de ventas - BASE PRINCIPAL"""
+#     if file_obj is None:
+#         return pd.DataFrame()
+    
+#     try:
+#         # Leer directamente con encabezados en la primera fila
+#         df = pd.read_excel(file_obj, header=0)
+        
+#         # Normalizar nombres de columnas
+#         df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
+        
+#         # Verificar columnas requeridas (ahora son NUMERO y VALOR_VENTA)
+#         if 'NUMERO' not in df.columns or 'VALOR_VENTA' not in df.columns:
+#             st.error(f"Libro {year_label}: Faltan columnas NUMERO o VALOR_VENTA")
+#             st.info(f"Columnas encontradas: {list(df.columns)}")
+#             return pd.DataFrame()
+        
+#         # Normalizar NUMERO
+#         df['NUMERO'] = df['NUMERO'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        
+#         # Normalizar VALOR_VENTA
+#         df['VALOR_VENTA'] = pd.to_numeric(df['VALOR_VENTA'], errors='coerce').fillna(0)
+        
+#         # Filtrar registros válidos
+#         df = df[df['VALOR_VENTA'] > 0]
+#         df = df[df['NUMERO'].str.len() > 0]
+#         df = df[df['NUMERO'] != '0']
+        
+#         df['PERIODO'] = year_label
+        
+#         st.success(f"Libro {year_label}: {len(df):,} registros válidos")
+#         return df
+        
+#     except Exception as e:
+#         st.error(f"Error en Libro {year_label}: {str(e)}")
+#         import traceback
+#         st.error(traceback.format_exc())
+#         return pd.DataFrame()
+
 @st.cache_data(show_spinner=False)
 def load_libro_ventas(file_obj, year_label):
     """Carga Libro de ventas - BASE PRINCIPAL"""
@@ -68,24 +109,27 @@ def load_libro_ventas(file_obj, year_label):
         df = pd.read_excel(file_obj, header=0)
         
         # Normalizar nombres de columnas
-        df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
+        df.columns = [str(col).strip().upper() for col in df.columns]
         
-        # Verificar columnas requeridas (ahora son NUMERO y VALOR_VENTA)
-        if 'NUMERO' not in df.columns or 'VALOR_VENTA' not in df.columns:
-            st.error(f"Libro {year_label}: Faltan columnas NUMERO o VALOR_VENTA")
+        # Verificar columnas requeridas (NRO y GRAVADAS IVA)
+        if 'NRO' not in df.columns or 'GRAVADAS IVA' not in df.columns:
+            st.error(f"Libro {year_label}: Faltan columnas NRO o GRAVADAS IVA")
             st.info(f"Columnas encontradas: {list(df.columns)}")
             return pd.DataFrame()
         
-        # Normalizar NUMERO
-        df['NUMERO'] = df['NUMERO'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        # Normalizar NRO
+        df['NRO'] = df['NRO'].astype(str).str.replace('.0', '', regex=False).str.strip()
         
-        # Normalizar VALOR_VENTA
-        df['VALOR_VENTA'] = pd.to_numeric(df['VALOR_VENTA'], errors='coerce').fillna(0)
+        # Normalizar GRAVADAS IVA (renombrar a VALOR para compatibilidad)
+        df['VALOR'] = pd.to_numeric(df['GRAVADAS IVA'], errors='coerce').fillna(0)
         
-        # Filtrar registros válidos
-        df = df[df['VALOR_VENTA'] > 0]
-        df = df[df['NUMERO'].str.len() > 0]
-        df = df[df['NUMERO'] != '0']
+        # Procesar FECHA si existe
+        if 'FECHA' in df.columns:
+            df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
+        
+        # Filtrar registros válidos (incluyendo negativos para devoluciones)
+        df = df[df['NRO'].str.len() > 0]
+        df = df[df['NRO'] != '0']
         
         df['PERIODO'] = year_label
         
@@ -98,6 +142,74 @@ def load_libro_ventas(file_obj, year_label):
         st.error(traceback.format_exc())
         return pd.DataFrame()
 
+# @st.cache_data(show_spinner=False)
+# def load_auxiliar(file_obj, year_label):
+#     """Carga Auxiliar - DATOS COMPLEMENTARIOS"""
+#     if file_obj is None:
+#         return pd.DataFrame()
+    
+#     try:
+#         # Leer directamente con encabezados en la primera fila
+#         df = pd.read_excel(file_obj, header=0)
+        
+#         # **MANEJAR COLUMNAS NOMBRE DUPLICADAS - MANTENER SOLO LA PRIMERA**
+#         columnas_lista = df.columns.tolist()
+#         nombre_count = columnas_lista.count('NOMBRE')
+
+#         if nombre_count > 1:
+#             # Encontrar índices de todas las columnas NOMBRE
+#             indices_nombre = [i for i, col in enumerate(columnas_lista) if col == 'NOMBRE']
+            
+#             # Renombrar la segunda NOMBRE a CIUDAD para eliminarla después
+#             columnas_lista[indices_nombre[1]] = 'CIUDAD_TEMP'
+#             df.columns = columnas_lista
+            
+#             # Eliminar CIUDAD_TEMP
+#             df = df.drop(columns=['CIUDAD_TEMP'], errors='ignore')
+            
+#             st.info(f"Auxiliar: Se eliminó la segunda columna NOMBRE (ciudad)")
+
+#         # Normalizar nombres de columnas
+#         df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
+        
+#         # Verificar que existan las columnas necesarias
+#         if 'NRO_CRUCE' not in df.columns or 'REFERENCIA' not in df.columns:
+#             st.error(f"Auxiliar {year_label}: Faltan columnas NRO_CRUCE o REFERENCIA")
+#             st.info(f"Columnas encontradas: {list(df.columns)}")
+#             return pd.DataFrame()
+        
+#         # Normalizar NRO_CRUCE de forma simple
+#         df['NRO_CRUCE'] = df['NRO_CRUCE'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        
+#         # Normalizar REFERENCIA
+#         df['REFERENCIA'] = df['REFERENCIA'].fillna('').astype(str).str.strip().str.upper()
+        
+#         # Filtrar EKMFLETE
+#         df = df[~df['REFERENCIA'].str.contains('EKMFLETE|EKMSS', na=False, case=False)]
+        
+#         # Normalizar campos opcionales
+#         for col in ['COMPROBA', 'VEND', 'DESCRIPCION']:
+#             if col in df.columns:
+#                 df[col] = df[col].fillna('').astype(str).str.strip()
+        
+#         if 'CANTIDAD' in df.columns:
+#             df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(0.0)
+#         else:
+#             df['CANTIDAD'] = 0.0
+        
+#         # Limpiar registros vacíos
+#         df = df[df['REFERENCIA'].str.len() > 0]
+#         df = df[df['NRO_CRUCE'].str.len() > 0]
+#         df = df[df['NRO_CRUCE'] != '0']
+        
+#         return df
+        
+#     except Exception as e:
+#         st.error(f"Error en Auxiliar {year_label}: {str(e)}")
+#         import traceback
+#         st.error(traceback.format_exc())
+#         return pd.DataFrame()
+
 @st.cache_data(show_spinner=False)
 def load_auxiliar(file_obj, year_label):
     """Carga Auxiliar - DATOS COMPLEMENTARIOS"""
@@ -108,53 +220,30 @@ def load_auxiliar(file_obj, year_label):
         # Leer directamente con encabezados en la primera fila
         df = pd.read_excel(file_obj, header=0)
         
-        # **MANEJAR COLUMNAS NOMBRE DUPLICADAS - MANTENER SOLO LA PRIMERA**
-        columnas_lista = df.columns.tolist()
-        nombre_count = columnas_lista.count('NOMBRE')
-
-        if nombre_count > 1:
-            # Encontrar índices de todas las columnas NOMBRE
-            indices_nombre = [i for i, col in enumerate(columnas_lista) if col == 'NOMBRE']
-            
-            # Renombrar la segunda NOMBRE a CIUDAD para eliminarla después
-            columnas_lista[indices_nombre[1]] = 'CIUDAD_TEMP'
-            df.columns = columnas_lista
-            
-            # Eliminar CIUDAD_TEMP
-            df = df.drop(columns=['CIUDAD_TEMP'], errors='ignore')
-            
-            st.info(f"Auxiliar: Se eliminó la segunda columna NOMBRE (ciudad)")
-
         # Normalizar nombres de columnas
-        df.columns = [str(col).strip().upper().replace('.', '').replace(' ', '_') for col in df.columns]
+        df.columns = [str(col).strip().upper() for col in df.columns]
         
         # Verificar que existan las columnas necesarias
-        if 'NRO_CRUCE' not in df.columns or 'REFERENCIA' not in df.columns:
-            st.error(f"Auxiliar {year_label}: Faltan columnas NRO_CRUCE o REFERENCIA")
+        if 'NRO. CRUCE' not in df.columns:
+            st.error(f"Auxiliar {year_label}: Falta columna NRO. CRUCE")
             st.info(f"Columnas encontradas: {list(df.columns)}")
             return pd.DataFrame()
         
-        # Normalizar NRO_CRUCE de forma simple
-        df['NRO_CRUCE'] = df['NRO_CRUCE'].astype(str).str.replace('.0', '', regex=False).str.strip()
-        
-        # Normalizar REFERENCIA
-        df['REFERENCIA'] = df['REFERENCIA'].fillna('').astype(str).str.strip().str.upper()
-        
-        # Filtrar EKMFLETE
-        df = df[~df['REFERENCIA'].str.contains('EKMFLETE|EKMSS', na=False, case=False)]
+        # Normalizar NRO. CRUCE
+        df['NRO_CRUCE'] = df['NRO. CRUCE'].astype(str).str.replace('.0', '', regex=False).str.strip()
         
         # Normalizar campos opcionales
-        for col in ['COMPROBA', 'VEND', 'DESCRIPCION']:
+        for col in ['COMPROBA', 'REFERENCIA', 'DESCRIPCION', 'VEND', 'C MP. CR']:
             if col in df.columns:
                 df[col] = df[col].fillna('').astype(str).str.strip()
         
-        if 'CANTIDAD' in df.columns:
-            df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(0.0)
+        # Normalizar CANT.ENTREGA
+        if 'CANT.ENTREGA' in df.columns:
+            df['CANTIDAD'] = pd.to_numeric(df['CANT.ENTREGA'], errors='coerce').fillna(0.0)
         else:
             df['CANTIDAD'] = 0.0
         
         # Limpiar registros vacíos
-        df = df[df['REFERENCIA'].str.len() > 0]
         df = df[df['NRO_CRUCE'].str.len() > 0]
         df = df[df['NRO_CRUCE'] != '0']
         
@@ -354,33 +443,64 @@ if not aux_all.empty:
 # Inicializar df_all
 df_all = pd.DataFrame()
 
-# CRUCE: Libro (NUMERO) con Auxiliar (NRO_CRUCE)
-if not libro_all.empty and not aux_all.empty:
-    # PREPARAR AUXILIAR: Seleccionar COMPROBA, REFERENCIA y DESCRIPCION
-    columnas_aux_necesarias = ['NRO_CRUCE', 'COMPROBA', 'REFERENCIA', 'DESCRIPCION']
-    columnas_aux_disponibles = [col for col in columnas_aux_necesarias if col in aux_all.columns]
+# # CRUCE: Libro (NUMERO) con Auxiliar (NRO_CRUCE)
+# if not libro_all.empty and not aux_all.empty:
+#     # PREPARAR AUXILIAR: Seleccionar COMPROBA, REFERENCIA y DESCRIPCION
+#     columnas_aux_necesarias = ['NRO_CRUCE', 'COMPROBA', 'REFERENCIA', 'DESCRIPCION']
+#     columnas_aux_disponibles = [col for col in columnas_aux_necesarias if col in aux_all.columns]
 
+#     aux_para_merge = aux_all[columnas_aux_disponibles].copy()
+
+#     # HACER EL CRUCE: Libro (NUMERO) con Auxiliar (NRO_CRUCE)
+#     df_all = libro_all.merge(
+#         aux_para_merge,
+#         left_on='NUMERO',  # Columna del Libro (antes era NRO)
+#         right_on='NRO_CRUCE',  # Columna del Auxiliar
+#         how='left'  # LEFT join: mantiene todos los registros del Libro
+#     )
+    
+#     # Renombrar VALOR_VENTA a VALOR para compatibilidad con el resto del código
+#     df_all = df_all.rename(columns={'VALOR_VENTA': 'VALOR'})
+    
+#     # Verificar que existe la columna VALOR
+#     if 'VALOR' not in df_all.columns:
+#         st.error("❌ No se encontró la columna VALOR_VENTA")
+#         st.info(f"Columnas disponibles: {list(df_all.columns)}")
+    
+#     # Verificar que existe la columna VENDEDOR
+#     if 'VENDEDOR' not in df_all.columns:
+#         st.warning("⚠️ No se encontró la columna VENDEDOR en el Libro de Ventas")
+    
+#     # Eliminar filas donde no hubo match en el auxiliar
+#     registros_antes = len(df_all)
+#     df_all = df_all[df_all['NRO_CRUCE'].notna()]
+#     registros_perdidos = registros_antes - len(df_all)
+    
+#     if registros_perdidos > 0:
+#         st.warning(f"⚠️ {registros_perdidos:,} registros del Libro no tuvieron match en Auxiliar")
+    
+#     # Limpiar columnas duplicadas
+#     df_all = df_all.loc[:, ~df_all.columns.duplicated(keep='first')]
+
+# CRUCE: Libro (NRO) con Auxiliar (NRO_CRUCE)
+if not libro_all.empty and not aux_all.empty:
+    # PREPARAR AUXILIAR: Seleccionar columnas necesarias
+    columnas_aux_necesarias = ['NRO_CRUCE', 'COMPROBA', 'REFERENCIA', 'DESCRIPCION', 'CANTIDAD', 'VEND']
+    
+    # Agregar C MP. CR si existe
+    if 'C MP. CR' in aux_all.columns:
+        columnas_aux_necesarias.append('C MP. CR')
+    
+    columnas_aux_disponibles = [col for col in columnas_aux_necesarias if col in aux_all.columns]
     aux_para_merge = aux_all[columnas_aux_disponibles].copy()
 
-    # HACER EL CRUCE: Libro (NUMERO) con Auxiliar (NRO_CRUCE)
+    # HACER EL CRUCE: Libro (NRO) con Auxiliar (NRO_CRUCE)
     df_all = libro_all.merge(
         aux_para_merge,
-        left_on='NUMERO',  # Columna del Libro (antes era NRO)
+        left_on='NRO',  # Columna del Libro
         right_on='NRO_CRUCE',  # Columna del Auxiliar
         how='left'  # LEFT join: mantiene todos los registros del Libro
     )
-    
-    # Renombrar VALOR_VENTA a VALOR para compatibilidad con el resto del código
-    df_all = df_all.rename(columns={'VALOR_VENTA': 'VALOR'})
-    
-    # Verificar que existe la columna VALOR
-    if 'VALOR' not in df_all.columns:
-        st.error("❌ No se encontró la columna VALOR_VENTA")
-        st.info(f"Columnas disponibles: {list(df_all.columns)}")
-    
-    # Verificar que existe la columna VENDEDOR
-    if 'VENDEDOR' not in df_all.columns:
-        st.warning("⚠️ No se encontró la columna VENDEDOR en el Libro de Ventas")
     
     # Eliminar filas donde no hubo match en el auxiliar
     registros_antes = len(df_all)
@@ -450,39 +570,71 @@ if not df_all.empty:
     # Limpiar columnas duplicadas
     df_all = df_all.loc[:, ~df_all.columns.duplicated(keep='first')]
 
-# **REGLA ESPECIAL FALABELLA USANDO PLATAFORMA Y CLIENTE**
-if 'PLATAFORMA' in df_all.columns and 'CLIENTE' in df_all.columns:
-    # Normalizar: quitar espacios, convertir a mayúsculas
-    df_all['PLATAFORMA_NORM'] = df_all['PLATAFORMA'].astype(str).str.replace(' ', '').str.upper().str.strip()
-    df_all['CLIENTE_NORM'] = df_all['CLIENTE'].astype(str).str.replace(' ', '').str.upper().str.strip()
+# # **REGLA ESPECIAL FALABELLA USANDO PLATAFORMA Y CLIENTE**
+# if 'PLATAFORMA' in df_all.columns and 'CLIENTE' in df_all.columns:
+#     # Normalizar: quitar espacios, convertir a mayúsculas
+#     df_all['PLATAFORMA_NORM'] = df_all['PLATAFORMA'].astype(str).str.replace(' ', '').str.upper().str.strip()
+#     df_all['CLIENTE_NORM'] = df_all['CLIENTE'].astype(str).str.replace(' ', '').str.upper().str.strip()
     
-    # Buscar cualquier registro que CONTENGA 'FALABELLA' en PLATAFORMA
-    mask_falabella = df_all['PLATAFORMA_NORM'].str.contains('FALABELLA', na=False)
+#     # Buscar cualquier registro que CONTENGA 'FALABELLA' en PLATAFORMA
+#     mask_falabella = df_all['PLATAFORMA_NORM'].str.contains('FALABELLA', na=False)
     
-    # Debug: ver qué valores tiene CLIENTE para PLATAFORMA con FALABELLA
+#     # Debug: ver qué valores tiene CLIENTE para PLATAFORMA con FALABELLA
+#     if mask_falabella.sum() > 0:
+#         clientes_falabella = df_all.loc[mask_falabella, ['PLATAFORMA', 'PLATAFORMA_NORM', 'CLIENTE', 'CLIENTE_NORM']].drop_duplicates()
+#         st.write(f"**DEBUG FALABELLA: Total registros = {mask_falabella.sum()}**")
+#         st.write(f"**Valores únicos en PLATAFORMA y CLIENTE:**")
+#         st.dataframe(clientes_falabella.head(20))
+    
+#     # 1. FALABELLA CT VERDE: cuando CLIENTE también contiene FALABELLA
+#     mask_ct_verde = mask_falabella & df_all['CLIENTE_NORM'].str.contains('FALABELLA', na=False)
+#     df_all.loc[mask_ct_verde, 'COMERCIO_NOMBRE'] = 'FALABELLA CT VERDE'
+    
+#     # 2. FALABELLA SELLER: cuando CLIENTE NO contiene FALABELLA
+#     mask_seller = mask_falabella & ~mask_ct_verde
+#     df_all.loc[mask_seller, 'COMERCIO_NOMBRE'] = 'FALABELLA SELLER'
+    
+#     # Mostrar contador
+#     count_ct_verde = mask_ct_verde.sum()
+#     count_seller = mask_seller.sum()
+#     st.success(f"✅ FALABELLA clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER (Total: {mask_falabella.sum():,})")
+    
+#     # Limpiar columnas temporales
+#     df_all = df_all.drop(columns=['PLATAFORMA_NORM', 'CLIENTE_NORM'], errors='ignore')
+# else:
+#     st.warning("⚠️ No se encontraron las columnas PLATAFORMA y/o CLIENTE para aplicar la regla de Falabella")
+
+# **REGLA ESPECIAL FALABELLA USANDO C MP. CR**
+if 'COMPROBA' in df_all.columns and 'C MP. CR' in df_all.columns:
+    # Identificar registros de Falabella (Z-082)
+    mask_falabella = df_all['COMPROBA'] == 'Z-082'
+    
     if mask_falabella.sum() > 0:
-        clientes_falabella = df_all.loc[mask_falabella, ['PLATAFORMA', 'PLATAFORMA_NORM', 'CLIENTE', 'CLIENTE_NORM']].drop_duplicates()
-        st.write(f"**DEBUG FALABELLA: Total registros = {mask_falabella.sum()}**")
-        st.write(f"**Valores únicos en PLATAFORMA y CLIENTE:**")
-        st.dataframe(clientes_falabella.head(20))
-    
-    # 1. FALABELLA CT VERDE: cuando CLIENTE también contiene FALABELLA
-    mask_ct_verde = mask_falabella & df_all['CLIENTE_NORM'].str.contains('FALABELLA', na=False)
-    df_all.loc[mask_ct_verde, 'COMERCIO_NOMBRE'] = 'FALABELLA CT VERDE'
-    
-    # 2. FALABELLA SELLER: cuando CLIENTE NO contiene FALABELLA
-    mask_seller = mask_falabella & ~mask_ct_verde
-    df_all.loc[mask_seller, 'COMERCIO_NOMBRE'] = 'FALABELLA SELLER'
-    
-    # Mostrar contador
-    count_ct_verde = mask_ct_verde.sum()
-    count_seller = mask_seller.sum()
-    st.success(f"✅ FALABELLA clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER (Total: {mask_falabella.sum():,})")
-    
-    # Limpiar columnas temporales
-    df_all = df_all.drop(columns=['PLATAFORMA_NORM', 'CLIENTE_NORM'], errors='ignore')
+        # Normalizar C MP. CR
+        df_all['CMP_CR_NORM'] = df_all['C MP. CR'].astype(str).str.strip().str.upper()
+        
+        # Extraer primer carácter
+        df_all['PREFIJO_CMP'] = df_all['CMP_CR_NORM'].str[0]
+        
+        # Clasificar según prefijo
+        # F = Falabella, S = Falabella Verde
+        mask_ct_verde = mask_falabella & (df_all['PREFIJO_CMP'] == 'S')
+        mask_seller = mask_falabella & (df_all['PREFIJO_CMP'] == 'F')
+        
+        df_all.loc[mask_ct_verde, 'COMERCIO_NOMBRE'] = 'FALABELLA CT VERDE'
+        df_all.loc[mask_seller, 'COMERCIO_NOMBRE'] = 'FALABELLA SELLER'
+        
+        # Mostrar contador
+        count_ct_verde = mask_ct_verde.sum()
+        count_seller = mask_seller.sum()
+        st.success(f"✅ FALABELLA clasificado: {count_ct_verde:,} CT VERDE | {count_seller:,} SELLER (Total: {mask_falabella.sum():,})")
+        
+        # Limpiar columnas temporales
+        df_all = df_all.drop(columns=['CMP_CR_NORM', 'PREFIJO_CMP'], errors='ignore')
+    else:
+        st.info("No se encontraron registros de Falabella (Z-082)")
 else:
-    st.warning("⚠️ No se encontraron las columnas PLATAFORMA y/o CLIENTE para aplicar la regla de Falabella")
+    st.warning("⚠️ No se encontró la columna C MP. CR para aplicar la regla de Falabella")
 
 # ==========================
 # DESCARGAR DATOS COMPLETOS
