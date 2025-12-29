@@ -165,6 +165,15 @@ def calcular_dias_habiles(fecha_inicio, fecha_fin):
 st.title("Control de Producción y Logística - Ekonomodo")
 
 st.sidebar.header("⚙️ Configuración")
+
+# Selector de rango de días
+dias_historico = st.sidebar.selectbox(
+    "📅 Rango de datos históricos",
+    options=[30, 60, 90, 180, 365],
+    index=1,  # Por defecto 60 días
+    format_func=lambda x: f"Últimos {x} días"
+)
+
 # URL fija del Google Sheet de Control
 sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCxpHYQaS8oesyTuUEs/edit#gid=1456329364"
 
@@ -176,7 +185,7 @@ if sheet_url:
         if df is not None and not df.empty:
             # Filtrar por último mes
             fecha_actual = datetime.now()
-            fecha_mes_atras = fecha_actual - timedelta(days=30)
+            fecha_mes_atras = fecha_actual - timedelta(days=dias_historico)
             df_ultimo_mes = df[df['FECHA DE VENTA'] >= fecha_mes_atras]
 
             # Cruzar con datos de entrega y calcular días de producción
