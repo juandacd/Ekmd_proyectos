@@ -166,6 +166,9 @@ st.title("Control de Producción y Logística - Ekonomodo")
 
 st.sidebar.header("⚙️ Configuración")
 
+# URL fija del Google Sheet de Control
+sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCxpHYQaS8oesyTuUEs/edit#gid=1456329364"
+
 # Selector de rango de días
 dias_historico = st.sidebar.selectbox(
     "📅 Rango de datos históricos",
@@ -173,9 +176,6 @@ dias_historico = st.sidebar.selectbox(
     index=1,  # Por defecto 60 días
     format_func=lambda x: f"Últimos {x} días"
 )
-
-# URL fija del Google Sheet de Control
-sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCxpHYQaS8oesyTuUEs/edit#gid=1456329364"
 
 if sheet_url:
     try:
