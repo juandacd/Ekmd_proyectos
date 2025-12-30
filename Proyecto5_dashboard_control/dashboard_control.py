@@ -334,11 +334,12 @@ if sheet_url:
                 st.success("✅ Todo despachado")
 
         # 6. ALERTA: Órdenes sin facturar
-        # Filtrar solo órdenes válidas (que tienen número en ORDEN y no son NaN/vacías)
+        # Filtrar solo órdenes válidas (que tienen número en ORDEN, no están canceladas)
         ordenes_validas = df_ultimo_mes[
             df_ultimo_mes['ORDEN'].notna() & 
             (df_ultimo_mes['ORDEN'] != '') & 
-            (df_ultimo_mes['ORDEN'] != 'NAN')
+            (df_ultimo_mes['ORDEN'] != 'NAN') &
+            (df_ultimo_mes['ESTATUS'] != 'CANCELADO')
         ].copy()
 
         # Convertir FACTURADO a string para análisis
