@@ -27,7 +27,7 @@ def cargar_datos(sheet_url):
         sheet_id = sheet_url.split('/d/')[1].split('/')[0]
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=1456329364"
         
-        df = pd.read_csv(csv_url, header=1)
+        df = pd.read_csv(csv_url, header=1, keep_default_na=False, na_values=[''])
         
         # Normalizar nombres de columnas
         df = df.rename(columns={
@@ -317,7 +317,7 @@ if sheet_url:
 
         # 5. ALERTA: Pendientes de despacho en logística
         pendientes_despacho = df_ultimo_mes[
-            (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') & 
+            (df_ultimo_mes['ESTATUS'].isin(['IMPORTADO', 'PRODUCCION', 'ENTREGADO'])) & 
             (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
         ]
 
@@ -326,19 +326,67 @@ if sheet_url:
                 st.warning(f"📦 {len(pendientes_despacho)} órdenes sin despachar")
                 with st.expander("Ver detalles"):
                     st.dataframe(
-                        pendientes_despacho[['ORDEN', 'CUENTA', 'DESCRIPCION PLATAFORMA', 
-                                            'CANTIDAD', 'LOGISTICA']],
+                        pendientes_despacho[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'FECHA DE VENCIMIENTO', 'DESCRIPCION PLATAFORMA', 
+                                            'CANTIDAD', 'ESTATUS', 'LOGISTICA']],
                         hide_index=True
                     )
             else:
                 st.success("✅ Todo despachado")
 
-        # 6. ALERTA: Órdenes sin facturar (PENDIENTE - PRÓXIMA IMPLEMENTACIÓN)
+        # 6. ALERTA: Órdenes sin facturar
+        # Filtrar solo órdenes válidas (que tienen número en ORDEN y no son NaN/vacías)
+        ordenes_validas = df_ultimo_mes[
+            df_ultimo_mes['ORDEN'].notna() & 
+            (df_ultimo_mes['ORDEN'] != '') & 
+            (df_ultimo_mes['ORDEN'] != 'NAN')
+        ].copy()
+
+        # Convertir FACTURADO a string para análisis
+        ordenes_validas['FACTURADO_STR'] = ordenes_validas['FACTURADO'].astype(str).str.strip()
+
+        # Convertir a numérico para detectar ceros
+        ordenes_validas['FACTURADO_NUM'] = pd.to_numeric(ordenes_validas['FACTURADO'], errors='coerce')
+
+        # Filtrar NO FACTURADAS: Tienen ORDEN válido y FACTURADO = 0
+        no_facturadas = ordenes_validas[ordenes_validas['FACTURADO_NUM'] == 0]
+
         with col6:
-            # TODO: Implementar lógica de órdenes sin facturar
-            # Placeholder por ahora
-            st.info("💰 Órdenes sin facturar")
-            st.caption("🚧 Funcionalidad en desarrollo")
+            if len(no_facturadas) > 0:
+                st.error(f"💰 {len(no_facturadas)} órdenes NO facturadas")
+                with st.expander("Ver detalles"):
+                    st.dataframe(
+                        no_facturadas[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'DESCRIPCION PLATAFORMA', 
+                                    'ESTATUS', 'ESTATUS LOGISTICA', 'FACTURADO']],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+            else:
+                st.success("✅ Todas las órdenes facturadas")
+
+        # Tercera fila de alertas
+        col7, col8, col9 = st.columns(3)
+
+        # 7. ALERTA: No registradas en Siigo
+        # Tienen ORDEN válido pero FACTURADO contiene '#N/A' o variaciones
+        no_registradas = ordenes_validas[
+            (ordenes_validas['FACTURADO_STR'].str.contains('#N/A', case=False, na=False)) |
+            (ordenes_validas['FACTURADO_STR'].str.upper() == '#N/A') |
+            (ordenes_validas['FACTURADO_STR'] == 'N/A') |
+            (ordenes_validas['FACTURADO'].isna())
+        ]
+
+        with col7:
+            if len(no_registradas) > 0:
+                st.warning(f"⚠️ {len(no_registradas)} órdenes no registradas en Siigo")
+                with st.expander("Ver detalles"):
+                    st.dataframe(
+                        no_registradas[['ORDEN', 'CUENTA', 'FECHA DE VENTA', 'DESCRIPCION PLATAFORMA', 
+                                    'ESTATUS', 'ESTATUS LOGISTICA', 'FACTURADO']],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+            else:
+                st.success("✅ Todas registradas en Siigo")
 
         st.divider()
 
@@ -378,15 +426,15 @@ if sheet_url:
                     st.info("No hay datos suficientes")
             
             with col2:
-                # Órdenes entrando a LOGISTICA por día
-                st.markdown("**Entradas a Logística por día**")
-                entradas_log = df_analisis[df_analisis['ESTATUS'].isin(['LOGISTICA', 'ENTREGADO'])]
+                # Órdenes entrando a IMPORTADO por día
+                st.markdown("**Entradas a IMPORTADO por día**")
+                entradas_log = df_analisis[df_analisis['ESTATUS'].isin(['IMPORTADO'])]
                 entradas_log_dia = entradas_log.groupby(entradas_log['FECHA DE VENTA'].dt.date).size().reset_index()
                 entradas_log_dia.columns = ['Fecha', 'Cantidad']
                 
                 if len(entradas_log_dia) > 0:
                     fig = px.line(entradas_log_dia, x='Fecha', y='Cantidad',
-                                title='Órdenes entrando a Logística',
+                                title='Órdenes entrando a IMPORTADO',
                                 markers=True, color_discrete_sequence=['orange'])
                     st.plotly_chart(fig, use_container_width=True)
                     st.metric("Promedio diario", f"{entradas_log_dia['Cantidad'].mean():.1f} órdenes")
@@ -494,8 +542,8 @@ if sheet_url:
                     st.info("No hay órdenes en producción")
             
             with col2:
-                st.markdown("**📦 Top 10 en Logística**")
-                log_data = df_analisis[df_analisis['ESTATUS'] == 'LOGISTICA'].groupby('EKM').agg({
+                st.markdown("**📦 Top 10 en IMPORTADO**")
+                log_data = df_analisis[df_analisis['ESTATUS'] == 'IMPORTADO'].groupby('EKM').agg({
                     'ORDEN': 'count',
                     'DESCRIPCION PLATAFORMA': 'first'
                 }).reset_index()
@@ -684,7 +732,7 @@ if sheet_url:
         
         with tab2:
             logistica = df_ultimo_mes[
-                (df_ultimo_mes['ESTATUS'] == 'LOGISTICA') &
+                (df_ultimo_mes['ESTATUS'] == 'IMPORTADO') &
                 (~df_ultimo_mes['LOGISTICA'].isin(['ENTREGADO', 'DESPACHADO']))
             ]
             st.dataframe(
