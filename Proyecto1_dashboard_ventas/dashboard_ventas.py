@@ -6,6 +6,11 @@ from datetime import datetime
 import numpy as np
 from urllib.parse import quote
 
+# Logo en la esquina superior
+top_col1, top_col2 = st.columns([0.7,0.3])
+with top_col2:
+    st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
+
 # Configuración de página
 st.set_page_config(
     page_title="Análisis de Ventas Ekonomodo 2025",
@@ -20,7 +25,7 @@ st.markdown("""
         font-size: 2.5rem;
         font-weight: bold;
         color: #1f77b4;
-        text-align: center;
+        text-align: left;
         margin-bottom: 2rem;
     }
     .section-header {
@@ -1287,8 +1292,8 @@ def calcular_ventas_netas(ventas, devoluciones):
     return ventas_totales, devoluciones_totales, ventas_totales - devoluciones_totales
 
 # Header principal
-st.markdown('<div class="main-header">📊 Análisis de Ventas Ekonomodo 2025</div>', unsafe_allow_html=True)
-st.markdown('<div style="text-align: center; margin-bottom: 2rem;">Reunión Comercial - 14 de Enero 2026</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">Análisis de Ventas Ekonomodo 2025</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align: left; margin-bottom: 2rem;">Reunión Comercial - 14 de Enero 2026</div>', unsafe_allow_html=True)
 
 # Cargar datos
 with st.spinner('Cargando datos desde Google Sheets...'):
@@ -1305,6 +1310,13 @@ if ventas_2025 is not None:
     
     # Sidebar para filtros
     st.sidebar.header("🎛️ Filtros y Configuración")
+    
+    # Botón de actualización en sidebar
+    if st.sidebar.button("🔄 Actualizar Datos", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    
+    st.sidebar.markdown("---")
     
     # Filtros de vista
     vista_analisis = st.sidebar.radio(
