@@ -1214,6 +1214,26 @@ def procesar_datos_ventas(url):
     
     return ventas_2025, devoluciones_2025, ventas_2024, devoluciones_2024
 
+def unificar_vendedor(nombre):
+    """Unifica nombres de vendedores quitando apellidos y normalizando"""
+    if pd.isna(nombre):
+        return nombre
+    
+    nombre = str(nombre).strip().upper()
+    
+    # Diccionario de unificaciones específicas
+    unificaciones = {
+        '0004 KATERINE GARCES': '0004 KATERINE',
+        '0004 KATERINE GARCÉS': '0004 KATERINE',
+        # Puedes agregar más unificaciones aquí si encuentras otros casos
+    }
+    
+    # Aplicar unificaciones específicas
+    if nombre in unificaciones:
+        return unificaciones[nombre]
+    
+    return nombre
+
 def preparar_datos_analisis(ventas, devoluciones):
     """Prepara los datos para análisis con las columnas correctas"""
     
@@ -1259,6 +1279,10 @@ def preparar_datos_analisis(ventas, devoluciones):
             ['S.A.S', 'SAS', 'S.A', 'LTDA', 'S EN C', 'E.U', 'EU', 'SOCIEDAD', 'EMPRESA', 'CIA', 'CORP']) 
             else 'Persona Natural'
         )
+
+    # Unificar vendedores (quitar apellidos y normalizar)
+    if 'VENDEDOR' in ventas.columns:
+        ventas['VENDEDOR'] = ventas['VENDEDOR'].apply(lambda x: unificar_vendedor(x) if pd.notna(x) else x)
     
     # Procesar devoluciones si existen
     if devoluciones is not None and len(devoluciones) > 0:
@@ -1287,9 +1311,12 @@ def calcular_ventas_netas(ventas, devoluciones):
     devoluciones_totales = 0
     
     if devoluciones is not None and len(devoluciones) > 0 and 'VALOR' in devoluciones.columns:
-        devoluciones_totales = devoluciones['VALOR'].sum()
+        devoluciones_totales = abs(devoluciones['VALOR'].sum())  # Usar valor absoluto
     
-    return ventas_totales, devoluciones_totales, ventas_totales - devoluciones_totales
+    # Asegurar que las ventas netas no sean negativas (puede pasar si hay más devoluciones que ventas en el filtro)
+    ventas_netas = ventas_totales - devoluciones_totales
+    
+    return ventas_totales, devoluciones_totales, ventas_netas
 
 # Header principal
 st.markdown('<div class="main-header">Análisis de Ventas Ekonomodo 2025</div>', unsafe_allow_html=True)
@@ -1446,7 +1473,34 @@ if ventas_2025 is not None:
                 'VALOR NETO': 'sum',
                 'CLIENTE': 'nunique'
             }).reset_index()
-            ventas_mensuales.columns = ['MES_NUM', 'FACTURAS', 'UNIDADES', 'MONTO', 'CLIENTES']
+            ventas_mensuales.columns = ['MES_NUM', 'FACTURAS', 'UNIDADES', 'MONTO_BRUTO', 'CLIENTES']
+
+            # Calcular devoluciones por mes si existen
+            if devoluciones_filtradas is not None and len(devoluciones_filtradas) > 0:
+                if 'MES' in devoluciones_filtradas.columns and 'VALOR' in devoluciones_filtradas.columns:
+                    # Convertir MES a numérico si es necesario
+                    devoluciones_filtradas['MES_NUM'] = pd.to_numeric(devoluciones_filtradas['MES'], errors='coerce')
+                    
+                    devol_mensuales = devoluciones_filtradas.groupby('MES_NUM').agg({
+                        'VALOR': 'sum',
+                        'CANTIDAD': 'sum'
+                    }).reset_index()
+                    devol_mensuales.columns = ['MES_NUM', 'DEVOL_MONTO', 'DEVOL_CANTIDAD']
+                    
+                    # Unir con ventas mensuales
+                    ventas_mensuales = ventas_mensuales.merge(devol_mensuales, on='MES_NUM', how='left')
+                    ventas_mensuales['DEVOL_MONTO'] = ventas_mensuales['DEVOL_MONTO'].fillna(0)
+                    ventas_mensuales['DEVOL_CANTIDAD'] = ventas_mensuales['DEVOL_CANTIDAD'].fillna(0)
+                else:
+                    ventas_mensuales['DEVOL_MONTO'] = 0
+                    ventas_mensuales['DEVOL_CANTIDAD'] = 0
+            else:
+                ventas_mensuales['DEVOL_MONTO'] = 0
+                ventas_mensuales['DEVOL_CANTIDAD'] = 0
+
+            # Calcular neto (ventas - devoluciones)
+            ventas_mensuales['MONTO'] = ventas_mensuales['MONTO_BRUTO'] - ventas_mensuales['DEVOL_MONTO']
+            ventas_mensuales['UNIDADES'] = ventas_mensuales['UNIDADES'] - ventas_mensuales['DEVOL_CANTIDAD']
             ventas_mensuales['MES'] = ventas_mensuales['MES_NUM'].map(
                 lambda x: meses_nombres[int(x)-1] if 1 <= x <= 12 else str(x)
             )
@@ -1611,6 +1665,101 @@ if ventas_2025 is not None:
         st.plotly_chart(fig_abc, use_container_width=True)
         
         st.markdown("---")
+
+        st.markdown("---")
+        
+        # 3.5 Tabla Completa de Productos
+        st.markdown('<div class="subsection-header">📋 Tabla Completa de Productos (Referencia y Descripción)</div>', unsafe_allow_html=True)
+        
+        if 'REFERENCIA' in ventas_filtradas.columns and 'DESCRIPCION' in ventas_filtradas.columns:
+            # Filtrar solo productos con referencia y descripción válidas
+            ventas_con_producto = ventas_filtradas[
+                (ventas_filtradas['REFERENCIA'].notna()) & 
+                (ventas_filtradas['DESCRIPCION'].notna())
+            ].copy()
+            
+            # Crear tabla completa
+            tabla_productos = ventas_con_producto.groupby(['REFERENCIA', 'DESCRIPCION']).agg({
+                'CANT.PEDIDA': 'sum',
+                'VALOR NETO': 'sum',
+                'NUMERO': 'nunique'
+            }).reset_index()
+            tabla_productos.columns = ['REFERENCIA', 'DESCRIPCION', 'CANTIDAD_TOTAL', 'MONTO_TOTAL', 'FACTURAS']
+            tabla_productos = tabla_productos.sort_values('MONTO_TOTAL', ascending=False)
+            
+            # Agregar columnas calculadas
+            tabla_productos['PRECIO_PROMEDIO'] = tabla_productos['MONTO_TOTAL'] / tabla_productos['CANTIDAD_TOTAL']
+            tabla_productos['PARTICIPACION_%'] = (tabla_productos['MONTO_TOTAL'] / tabla_productos['MONTO_TOTAL'].sum() * 100)
+            
+            # Reordenar columnas
+            tabla_productos = tabla_productos[['REFERENCIA', 'DESCRIPCION', 'CANTIDAD_TOTAL', 'MONTO_TOTAL', 'PRECIO_PROMEDIO', 'FACTURAS', 'PARTICIPACION_%']]
+            
+            # Mostrar resumen
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📦 Total Referencias", f"{len(tabla_productos):,}")
+            with col2:
+                st.metric("💰 Monto Total", f"${tabla_productos['MONTO_TOTAL'].sum():,.0f}")
+            with col3:
+                st.metric("📊 Cantidad Total", f"{tabla_productos['CANTIDAD_TOTAL'].sum():,.0f}")
+            
+            # Filtros para la tabla
+            col1, col2 = st.columns(2)
+            with col1:
+                buscar_producto = st.text_input("🔍 Buscar por Referencia o Descripción:", "")
+            with col2:
+                ordenar_por = st.selectbox("Ordenar por:", 
+                    ["Monto Total (Mayor a Menor)", "Monto Total (Menor a Mayor)", 
+                     "Cantidad (Mayor a Menor)", "Cantidad (Menor a Mayor)",
+                     "Referencia (A-Z)", "Referencia (Z-A)"])
+            
+            # Aplicar filtro de búsqueda
+            if buscar_producto:
+                tabla_filtrada = tabla_productos[
+                    tabla_productos['REFERENCIA'].str.contains(buscar_producto, case=False, na=False) |
+                    tabla_productos['DESCRIPCION'].str.contains(buscar_producto, case=False, na=False)
+                ]
+            else:
+                tabla_filtrada = tabla_productos.copy()
+            
+            # Aplicar ordenamiento
+            if ordenar_por == "Monto Total (Mayor a Menor)":
+                tabla_filtrada = tabla_filtrada.sort_values('MONTO_TOTAL', ascending=False)
+            elif ordenar_por == "Monto Total (Menor a Mayor)":
+                tabla_filtrada = tabla_filtrada.sort_values('MONTO_TOTAL', ascending=True)
+            elif ordenar_por == "Cantidad (Mayor a Menor)":
+                tabla_filtrada = tabla_filtrada.sort_values('CANTIDAD_TOTAL', ascending=False)
+            elif ordenar_por == "Cantidad (Menor a Mayor)":
+                tabla_filtrada = tabla_filtrada.sort_values('CANTIDAD_TOTAL', ascending=True)
+            elif ordenar_por == "Referencia (A-Z)":
+                tabla_filtrada = tabla_filtrada.sort_values('REFERENCIA', ascending=True)
+            elif ordenar_por == "Referencia (Z-A)":
+                tabla_filtrada = tabla_filtrada.sort_values('REFERENCIA', ascending=False)
+            
+            # Mostrar tabla con formato
+            st.dataframe(
+                tabla_filtrada.style.format({
+                    'CANTIDAD_TOTAL': '{:,.0f}',
+                    'MONTO_TOTAL': '${:,.0f}',
+                    'PRECIO_PROMEDIO': '${:,.0f}',
+                    'FACTURAS': '{:,.0f}',
+                    'PARTICIPACION_%': '{:.2f}%'
+                }),
+                use_container_width=True,
+                height=600
+            )
+            
+            # Botón de descarga
+            csv = tabla_filtrada.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Descargar Tabla Completa en CSV",
+                data=csv,
+                file_name=f"productos_completo_{filtro_aplicado if filtro_aplicado else 'general'}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+            st.info(f"📊 Mostrando {len(tabla_filtrada):,} de {len(tabla_productos):,} productos")
         
         # 4. Ticket Promedio
         st.markdown('<div class="subsection-header">4. 💳 Ticket Promedio</div>', unsafe_allow_html=True)
