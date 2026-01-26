@@ -1,4 +1,12 @@
 import streamlit as st
+
+# Configuración de la página
+st.set_page_config(
+    page_title="Control Ekonomodo",
+    page_icon="📦",
+    layout="wide"
+)
+
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
@@ -11,13 +19,6 @@ from pandas.tseries.offsets import CustomBusinessDay
 top_col1, top_col2 = st.columns([0.7,0.3])
 with top_col2:
     st.image("https://ekonomodo.com/cdn/shop/files/Logo-Ekonomodo-color.svg?v=1736956350&width=450", width=5000)
-
-# Configuración de la página
-st.set_page_config(
-    page_title="Control Ekonomodo",
-    page_icon="📦",
-    layout="wide"
-)
 
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def cargar_datos(sheet_url):
