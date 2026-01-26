@@ -3,3 +3,4 @@ pandas
 streamlit
 plotly
 openpyxl
+altair>=5.0.0
