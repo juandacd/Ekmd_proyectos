@@ -1178,6 +1178,16 @@ def procesar_datos_ventas(url):
     # Limpiar columnas
     ventas_2025 = limpiar_columnas(ventas_2025)
     devoluciones_2025 = limpiar_columnas(devoluciones_2025)
+
+    # Renombrar columnas duplicadas en devoluciones (quitar el .1)
+    if 'VENDEDOR.1' in devoluciones_2025.columns:
+        devoluciones_2025.rename(columns={'VENDEDOR.1': 'VENDEDOR'}, inplace=True)
+    if 'NUMERO.1' in devoluciones_2025.columns:
+        devoluciones_2025.rename(columns={'NUMERO.1': 'NUMERO'}, inplace=True)
+    if 'PLATAFORMA.1' in devoluciones_2025.columns:
+        devoluciones_2025.rename(columns={'PLATAFORMA.1': 'PLATAFORMA'}, inplace=True)
+    if 'MES.1' in devoluciones_2025.columns:
+        devoluciones_2025.rename(columns={'MES.1': 'MES'}, inplace=True)
     
     # Limpiar valores #N/D sin eliminar filas
     ventas_2025 = limpiar_valores_nd(ventas_2025)
@@ -1201,8 +1211,18 @@ def procesar_datos_ventas(url):
         devoluciones_2024 = limpiar_columnas(devoluciones_2024)
         
         # Limpiar valores #N/D sin eliminar filas
-        ventas_2024 = limpiar_valores_nd(ventas_2024)
-        devoluciones_2024 = limpiar_valores_nd(devoluciones_2024)
+        ventas_2024 = limpiar_columnas(ventas_2024)
+        devoluciones_2024 = limpiar_columnas(devoluciones_2024)
+
+        # Renombrar columnas duplicadas en devoluciones 2024
+        if 'VENDEDOR.1' in devoluciones_2024.columns:
+            devoluciones_2024.rename(columns={'VENDEDOR.1': 'VENDEDOR'}, inplace=True)
+        if 'NUMERO.1' in devoluciones_2024.columns:
+            devoluciones_2024.rename(columns={'NUMERO.1': 'NUMERO'}, inplace=True)
+        if 'PLATAFORMA.1' in devoluciones_2024.columns:
+            devoluciones_2024.rename(columns={'PLATAFORMA.1': 'PLATAFORMA'}, inplace=True)
+        if 'MES.1' in devoluciones_2024.columns:
+            devoluciones_2024.rename(columns={'MES.1': 'MES'}, inplace=True)
         
         ventas_2024 = ventas_2024.dropna(how='all')
         ventas_2024 = ventas_2024[ventas_2024.iloc[:, 0].notna()].reset_index(drop=True)
@@ -1299,7 +1319,35 @@ def preparar_datos_analisis(ventas, devoluciones):
             devoluciones['CANTIDAD'] = devoluciones['CANTIDAD'].str.replace('.', '', regex=False)
             devoluciones['CANTIDAD'] = devoluciones['CANTIDAD'].str.replace(',', '.', regex=False)
             devoluciones['CANTIDAD'] = pd.to_numeric(devoluciones['CANTIDAD'], errors='coerce')
+
+    # Normalizar FACTURA No para que cruce con NUMERO de ventas
+    if 'FACTURA NO' in devoluciones.columns:
+        # Extraer solo los números, quitando letras y ceros a la izquierda
+        devoluciones['NUMERO_FACTURA'] = devoluciones['FACTURA NO'].astype(str).str.extract(r'(\d+)')[0]
+        devoluciones['NUMERO_FACTURA'] = pd.to_numeric(devoluciones['NUMERO_FACTURA'], errors='coerce')
+    
+    # Normalizar VENDEDOR en devoluciones para que cruce con ventas
+    if 'VENDEDOR' in devoluciones.columns:
+        # Crear columna con solo el nombre (sin código)
+        devoluciones['VENDEDOR_NOMBRE'] = devoluciones['VENDEDOR'].str.strip().str.upper()
             
+        # Convertir MES de texto a número
+        if 'MES' in devoluciones.columns:
+            meses_map = {
+                'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4,
+                'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8,
+                'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12,
+                'ENE': 1, 'FEB': 2, 'MAR': 3, 'ABR': 4,
+                'MAY': 5, 'JUN': 6, 'JUL': 7, 'AGO': 8,
+                'SEP': 9, 'OCT': 10, 'NOV': 11, 'DIC': 12,
+                '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6,
+                '7': 7, '8': 8, '9': 9, '10': 10, '11': 11, '12': 12
+            }
+            # Convertir a mayúsculas y limpiar espacios
+            devoluciones['MES_TEXTO'] = devoluciones['MES'].astype(str).str.strip().str.upper()
+            # Mapear a número
+            devoluciones['MES_NUM'] = devoluciones['MES_TEXTO'].map(meses_map)
+    
     # Procesar ciudad y departamento
     ventas = procesar_ciudad_departamento(ventas)
     
@@ -1437,15 +1485,82 @@ if ventas_2025 is not None:
         with col1:
             if 'MES_NUM' in ventas_filtradas.columns:
                 meses_nombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+                
+                # Ventas brutas por mes
                 ventas_mes = ventas_filtradas.groupby('MES_NUM')['VALOR NETO'].sum().reset_index()
+                ventas_mes.columns = ['MES_NUM', 'VENTAS_BRUTAS']
+                
+                # Inicializar columna DEVOLUCIONES en 0
+                ventas_mes['DEVOLUCIONES'] = 0
+                
+                # Devoluciones por mes
+                if devoluciones_filtradas is not None and len(devoluciones_filtradas) > 0:
+                    if 'VALOR' in devoluciones_filtradas.columns and 'MES_NUM' in devoluciones_filtradas.columns:
+                        # Filtrar solo los que tienen MES_NUM válido
+                        devol_con_mes = devoluciones_filtradas[devoluciones_filtradas['MES_NUM'].notna()].copy()
+                        
+                        if len(devol_con_mes) > 0:
+                            # Agrupar devoluciones por mes
+                            devol_mes = devol_con_mes.groupby('MES_NUM')['VALOR'].sum().reset_index()
+                            devol_mes.columns = ['MES_NUM', 'DEVOLUCIONES']
+                            
+                            # Convertir a valor absoluto (por si vienen negativos)
+                            devol_mes['DEVOLUCIONES'] = devol_mes['DEVOLUCIONES'].abs()
+                            
+                            # Unir ventas y devoluciones
+                            ventas_mes = ventas_mes.merge(devol_mes, on='MES_NUM', how='left', suffixes=('', '_devol'))
+                            
+                            # Si el merge creó una columna duplicada, usar la nueva
+                            if 'DEVOLUCIONES_devol' in ventas_mes.columns:
+                                ventas_mes['DEVOLUCIONES'] = ventas_mes['DEVOLUCIONES_devol'].fillna(0)
+                                ventas_mes.drop('DEVOLUCIONES_devol', axis=1, inplace=True)
+                            else:
+                                ventas_mes['DEVOLUCIONES'] = ventas_mes['DEVOLUCIONES'].fillna(0)
+                
+                # Calcular ventas netas
+                ventas_mes['VENTAS_NETAS'] = ventas_mes['VENTAS_BRUTAS'] - ventas_mes['DEVOLUCIONES']
                 ventas_mes['MES'] = ventas_mes['MES_NUM'].map(lambda x: meses_nombres[int(x)-1] if 1 <= x <= 12 else str(x))
                 
-                fig_mes = px.line(ventas_mes, x='MES', y='VALOR NETO', 
-                                 title='Evolución Ventas Mensuales 2025',
-                                 markers=True)
-                fig_mes.update_traces(line_color='#1f77b4', line_width=3)
+                # Crear gráfico con 3 líneas
+                fig_mes = go.Figure()
+                
+                fig_mes.add_trace(go.Scatter(
+                    x=ventas_mes['MES'], 
+                    y=ventas_mes['VENTAS_BRUTAS'],
+                    name='Ventas Brutas',
+                    mode='lines+markers',
+                    line=dict(color='#1f77b4', width=3),
+                    marker=dict(size=8)
+                ))
+                
+                fig_mes.add_trace(go.Scatter(
+                    x=ventas_mes['MES'], 
+                    y=ventas_mes['DEVOLUCIONES'],
+                    name='Devoluciones',
+                    mode='lines+markers',
+                    line=dict(color='#ff7f0e', width=2, dash='dash'),
+                    marker=dict(size=6)
+                ))
+                
+                fig_mes.add_trace(go.Scatter(
+                    x=ventas_mes['MES'], 
+                    y=ventas_mes['VENTAS_NETAS'],
+                    name='Ventas Netas',
+                    mode='lines+markers',
+                    line=dict(color='#2ca02c', width=3),
+                    marker=dict(size=8)
+                ))
+                
+                fig_mes.update_layout(
+                    title='Evolución Ventas Mensuales 2025',
+                    xaxis_title='Mes',
+                    yaxis_title='Valor ($)',
+                    hovermode='x unified',
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                
                 st.plotly_chart(fig_mes, use_container_width=True)
-        
+
         with col2:
             if 'TIPO_CLIENTE' in ventas_filtradas.columns:
                 ventas_tipo = ventas_filtradas.groupby('TIPO_CLIENTE')['VALOR NETO'].sum().reset_index()
@@ -1965,23 +2080,68 @@ if ventas_2025 is not None:
             
             ventas_con_vendedor = ventas_filtradas[ventas_filtradas['VENDEDOR'].notna()].copy()
             
+            # Agrupar VENTAS por vendedor
             ventas_vendedor = ventas_con_vendedor.groupby('VENDEDOR').agg({
                 'VALOR NETO': 'sum',
                 'NUMERO': 'nunique',
                 'CANT.PEDIDA': 'sum',
                 'CLIENTE': 'nunique'
             }).reset_index()
-            ventas_vendedor.columns = ['VENDEDOR', 'VALOR_TOTAL', 'FACTURAS', 'UNIDADES', 'CLIENTES']
-            ventas_vendedor = ventas_vendedor.sort_values('VALOR_TOTAL', ascending=False)
-            ventas_vendedor['PARTICIPACION'] = (ventas_vendedor['VALOR_TOTAL'] / ventas_vendedor['VALOR_TOTAL'].sum() * 100)
-            ventas_vendedor['TICKET_PROM'] = ventas_vendedor['VALOR_TOTAL'] / ventas_vendedor['FACTURAS']
+            ventas_vendedor.columns = ['VENDEDOR', 'VENTAS_BRUTAS', 'FACTURAS', 'UNIDADES', 'CLIENTES']
+            
+            # Inicializar columnas DEVOLUCIONES en 0
+            ventas_vendedor['DEVOLUCIONES'] = 0.0
+            ventas_vendedor['UNIDADES_DEVUELTAS'] = 0.0
+            
+            # Calcular DEVOLUCIONES por vendedor si existen
+            if devoluciones_filtradas is not None and len(devoluciones_filtradas) > 0 and 'VENDEDOR' in devoluciones_filtradas.columns:
+                # Agrupar devoluciones por nombre (tal como viene)
+                devol_vendedor = devoluciones_filtradas.groupby('VENDEDOR').agg({
+                    'VALOR': lambda x: abs(x.sum()),
+                    'CANTIDAD': lambda x: abs(x.sum())
+                }).reset_index()
+                devol_vendedor.columns = ['VENDEDOR_DEVOL', 'DEVOLUCIONES', 'UNIDADES_DEVUELTAS']
+                
+                # Función para hacer matching flexible entre nombres
+                def encontrar_vendedor(vendedor_venta):
+                    vendedor_venta_limpio = str(vendedor_venta).upper().strip()
+                    # Extraer solo el primer nombre del vendedor de ventas (sin código ni apellidos)
+                    partes = vendedor_venta_limpio.split()
+                    if len(partes) > 1:
+                        primer_nombre = partes[1]  # El primer nombre después del código
+                    else:
+                        primer_nombre = partes[0]
+                    
+                    # Buscar en devoluciones un vendedor que contenga ese primer nombre
+                    for _, row_devol in devol_vendedor.iterrows():
+                        vendedor_devol = str(row_devol['VENDEDOR_DEVOL']).upper().strip()
+                        # Si el primer nombre está en el vendedor de devoluciones
+                        if primer_nombre in vendedor_devol or vendedor_devol in vendedor_venta_limpio:
+                            return row_devol['DEVOLUCIONES'], row_devol['UNIDADES_DEVUELTAS']
+                    
+                    return 0.0, 0.0
+                
+                # Aplicar matching para cada vendedor
+                ventas_vendedor[['DEVOLUCIONES', 'UNIDADES_DEVUELTAS']] = ventas_vendedor['VENDEDOR'].apply(
+                    lambda x: pd.Series(encontrar_vendedor(x))
+                )
+            
+            # Calcular VENTAS NETAS y UNIDADES NETAS
+            ventas_vendedor['VENTAS_NETAS'] = ventas_vendedor['VENTAS_BRUTAS'] - ventas_vendedor['DEVOLUCIONES']
+            ventas_vendedor['UNIDADES_NETAS'] = ventas_vendedor['UNIDADES'] - ventas_vendedor['UNIDADES_DEVUELTAS']
+            ventas_vendedor['TASA_DEVOLUCION_%'] = (ventas_vendedor['DEVOLUCIONES'] / ventas_vendedor['VENTAS_BRUTAS'] * 100).fillna(0).replace([np.inf, -np.inf], 0)
+            
+            # Ordenar por ventas netas
+            ventas_vendedor = ventas_vendedor.sort_values('VENTAS_NETAS', ascending=False)
+            ventas_vendedor['PARTICIPACION'] = (ventas_vendedor['VENTAS_NETAS'] / ventas_vendedor['VENTAS_NETAS'].sum() * 100)
+            ventas_vendedor['TICKET_PROM'] = ventas_vendedor['VENTAS_NETAS'] / ventas_vendedor['FACTURAS']
             
             col1, col2 = st.columns(2)
             
             with col1:
-                fig_vend_bar = px.bar(ventas_vendedor, x='VENDEDOR', y='VALOR_TOTAL',
-                    title='Ventas por Vendedor/Comercial',
-                    color='VALOR_TOTAL', color_continuous_scale='Greens', text='VALOR_TOTAL')
+                fig_vend_bar = px.bar(ventas_vendedor, x='VENDEDOR', y='VENTAS_NETAS',
+                    title='Ventas Netas por Vendedor/Comercial',
+                    color='VENTAS_NETAS', color_continuous_scale='Greens', text='VENTAS_NETAS')
                 fig_vend_bar.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
                 fig_vend_bar.update_xaxes(tickangle=-45)
                 st.plotly_chart(fig_vend_bar, use_container_width=True)
@@ -1994,19 +2154,37 @@ if ventas_2025 is not None:
                 fig_ticket_vend.update_xaxes(tickangle=-45)
                 st.plotly_chart(fig_ticket_vend, use_container_width=True)
             
+            # Gráfico de devoluciones
+            st.write("**↩️ Análisis de Devoluciones por Vendedor**")
+            fig_devol_vend = px.bar(ventas_vendedor, x='VENDEDOR', y='DEVOLUCIONES',
+                title='Valor de Devoluciones por Vendedor',
+                color='TASA_DEVOLUCION_%', color_continuous_scale='Reds', text='DEVOLUCIONES')
+            fig_devol_vend.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+            fig_devol_vend.update_xaxes(tickangle=-45)
+            st.plotly_chart(fig_devol_vend, use_container_width=True)
+            
+            # Tabla completa con todas las métricas
+            st.write("**📊 Tabla Detallada por Vendedor**")
             st.dataframe(
-                ventas_vendedor.style.format({
-                    'VALOR_TOTAL': '${:,.0f}',
+                ventas_vendedor[['VENDEDOR', 'VENTAS_BRUTAS', 'DEVOLUCIONES', 'VENTAS_NETAS', 'FACTURAS', 
+                                'UNIDADES', 'UNIDADES_DEVUELTAS', 'UNIDADES_NETAS', 'CLIENTES', 
+                                'TASA_DEVOLUCION_%', 'PARTICIPACION', 'TICKET_PROM']].style.format({
+                    'VENTAS_BRUTAS': '${:,.0f}',
+                    'DEVOLUCIONES': '${:,.0f}',
+                    'VENTAS_NETAS': '${:,.0f}',
                     'FACTURAS': '{:,.0f}',
                     'UNIDADES': '{:,.0f}',
+                    'UNIDADES_DEVUELTAS': '{:,.0f}',
+                    'UNIDADES_NETAS': '{:,.0f}',
                     'CLIENTES': '{:,.0f}',
+                    'TASA_DEVOLUCION_%': '{:.2f}%',
                     'PARTICIPACION': '{:.2f}%',
                     'TICKET_PROM': '${:,.0f}'
                 }),
                 use_container_width=True
             )
-        
-        st.markdown("---")
+        else:
+            st.info("No hay datos de devoluciones por vendedor")
         
         # 9. Tipo de Cliente (Persona Natural vs Empresa)
         st.markdown('<div class="subsection-header">9. 👥 Análisis por Tipo de Cliente</div>', unsafe_allow_html=True)
