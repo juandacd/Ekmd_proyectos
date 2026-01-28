@@ -1,5 +1,6 @@
-numpy
-pandas
-streamlit
-plotly
-openpyxl
+streamlit==1.53.1
+plotly==6.3.0
+pandas==2.3.2
+numpy==2.3.2
+altair==6.0.0
+openpyxl==3.1.5
