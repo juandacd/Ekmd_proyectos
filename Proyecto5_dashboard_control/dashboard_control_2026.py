@@ -63,12 +63,37 @@ def cargar_datos(sheet_url):
     
 @st.cache_data(ttl=300)
 def cargar_estatus(sheet_url):
-    """Carga los datos de la hoja Estatus"""
+    """Carga los datos de las hojas Estatus 2025 y Estatus 2026 y las combina"""
     try:
         sheet_id = sheet_url.split('/d/')[1].split('/')[0]
-        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus%202026"
         
-        df_estatus = pd.read_csv(csv_url)
+        # Lista para almacenar los dataframes
+        dfs_estatus = []
+        
+        # Cargar Estatus 2025
+        try:
+            csv_url_2025 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus%202025"
+            df_2025 = pd.read_csv(csv_url_2025)
+            dfs_estatus.append(df_2025)
+            st.sidebar.write("✅ Estatus 2025 cargado")
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ No se pudo cargar Estatus 2025: {str(e)}")
+        
+        # Cargar Estatus 2026
+        try:
+            csv_url_2026 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus%202026"
+            df_2026 = pd.read_csv(csv_url_2026)
+            dfs_estatus.append(df_2026)
+            st.sidebar.write("✅ Estatus 2026 cargado")
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ No se pudo cargar Estatus 2026: {str(e)}")
+        
+        # Combinar ambas hojas
+        if len(dfs_estatus) == 0:
+            st.error("No se pudo cargar ninguna hoja de Estatus")
+            return None
+        
+        df_estatus = pd.concat(dfs_estatus, ignore_index=True)
         
         # Renombrar columnas para que sea más fácil trabajar
         df_estatus = df_estatus.rename(columns={
@@ -79,8 +104,10 @@ def cargar_estatus(sheet_url):
         # Convertir ORDEN a entero primero (elimina .0) y luego a string
         df_estatus['ORDEN'] = df_estatus['ORDEN'].fillna(0).astype(float).astype(int).astype(str)
         
-        # Convertir fecha de entrega a datetime (pandas lo detectará automáticamente)
+        # Convertir fecha de entrega a datetime
         df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'], format='mixed', dayfirst=True, errors='coerce')
+        
+        st.sidebar.write(f"📊 Total registros de entrega: {len(df_estatus)}")
         
         return df_estatus
     except Exception as e:
