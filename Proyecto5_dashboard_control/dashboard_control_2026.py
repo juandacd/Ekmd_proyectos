@@ -36,8 +36,10 @@ def cargar_datos(sheet_url):
             'PRODUCCION ESTATUS': 'ESTATUS'
         })
 
-        # Convertir ORDEN a string
-        df['ORDEN'] = df['ORDEN'].astype(str)
+        # Convertir ORDEN a string limpio (sin .0), manejando valores vacíos
+        df['ORDEN'] = pd.to_numeric(df['ORDEN'], errors='coerce').fillna(0).astype(int).astype(str)
+        # Eliminar filas con ORDEN = "0" (que eran vacías o inválidas)
+        df = df[df['ORDEN'] != '0']
         
         # Convertir fechas
         df['FECHA DE VENTA'] = pd.to_datetime(df['FECHA DE VENTA'], format='%d/%m/%Y', errors='coerce')
@@ -75,7 +77,7 @@ def cargar_estatus(sheet_url):
             csv_url_2025 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus%202025"
             df_2025 = pd.read_csv(csv_url_2025)
             dfs_estatus.append(df_2025)
-            st.sidebar.write("✅ Estatus 2025 cargado")
+            # st.sidebar.write("✅ Estatus 2025 cargado")
         except Exception as e:
             st.sidebar.warning(f"⚠️ No se pudo cargar Estatus 2025: {str(e)}")
         
@@ -84,7 +86,7 @@ def cargar_estatus(sheet_url):
             csv_url_2026 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus%202026"
             df_2026 = pd.read_csv(csv_url_2026)
             dfs_estatus.append(df_2026)
-            st.sidebar.write("✅ Estatus 2026 cargado")
+            # st.sidebar.write("✅ Estatus 2026 cargado")
         except Exception as e:
             st.sidebar.warning(f"⚠️ No se pudo cargar Estatus 2026: {str(e)}")
         
@@ -107,7 +109,7 @@ def cargar_estatus(sheet_url):
         # Convertir fecha de entrega a datetime
         df_estatus['FECHA_ENTREGA'] = pd.to_datetime(df_estatus['FECHA_ENTREGA'], format='mixed', dayfirst=True, errors='coerce')
         
-        st.sidebar.write(f"📊 Total registros de entrega: {len(df_estatus)}")
+        # st.sidebar.write(f"📊 Total registros de entrega: {len(df_estatus)}")
         
         return df_estatus
     except Exception as e:
@@ -224,12 +226,16 @@ if sheet_url:
                     'FECHA_ENTREGA': 'max'
                 }).reset_index()
                 
+                # st.sidebar.write(f"Después de agrupar: {len(df_estatus_ultimo)} órdenes únicas")
+                
                 # Cruzar datos
                 df_ultimo_mes = df_ultimo_mes.merge(
                     df_estatus_ultimo, 
                     on='ORDEN', 
                     how='left'
                 )
+                
+                # st.sidebar.write(f"Después del merge, órdenes con FECHA_ENTREGA: {df_ultimo_mes['FECHA_ENTREGA'].notna().sum()}")
                 
             # Calcular días de producción en días hábiles (solo para órdenes con fecha de entrega)
             df_ultimo_mes['DIAS_PRODUCCION'] = None
@@ -435,7 +441,7 @@ if sheet_url:
 
         with tab_stat1:
             st.subheader("Flujo de Órdenes Diario")
-            
+
             col1, col2 = st.columns(2)
             
             with col1:
