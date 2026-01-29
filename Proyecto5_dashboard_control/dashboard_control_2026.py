@@ -66,7 +66,7 @@ def cargar_estatus(sheet_url):
     """Carga los datos de la hoja Estatus"""
     try:
         sheet_id = sheet_url.split('/d/')[1].split('/')[0]
-        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus 2026"
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus%202026"
         
         df_estatus = pd.read_csv(csv_url)
         
