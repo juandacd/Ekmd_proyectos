@@ -66,7 +66,7 @@ def cargar_estatus(sheet_url):
     """Carga los datos de la hoja Estatus"""
     try:
         sheet_id = sheet_url.split('/d/')[1].split('/')[0]
-        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus"
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Estatus 2026"
         
         df_estatus = pd.read_csv(csv_url)
         
@@ -168,7 +168,7 @@ st.title("Control de Producción y Logística - Ekonomodo")
 st.sidebar.header("⚙️ Configuración")
 
 # URL fija del Google Sheet de Control
-sheet_url = "https://docs.google.com/spreadsheets/d/1xx9zB70fxzl0YyXkh5o0tIs_eCxpHYQaS8oesyTuUEs/edit#gid=1456329364"
+sheet_url = "https://docs.google.com/spreadsheets/d/1zIax4vUnzs8p2UJBgXqM2DxeHOYO_llGN5iJrC4hNlM/edit?resourcekey=&gid=218363912#gid=218363912"
 
 # Selector de rango de días
 dias_historico = st.sidebar.selectbox(
